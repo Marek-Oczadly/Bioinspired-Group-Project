@@ -14,6 +14,61 @@ sys.path.append(main_dir_loc + 'capyle/guicomponents')
 
 from capyle.ca import Grid2D, Neighbourhood, randomise2d
 import capyle.utils as utils
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Optional, Tuple
+
+
+class Terrain(Enum):
+    CHAPARRAL = auto()
+    DENSE_FOREST = auto()
+    SCRUBLAND_CANYON = auto()
+    LAKE = auto()
+
+
+class BurnState(Enum):
+    UNBURNT = auto()
+    BURNING = auto()
+    BURNT = auto()
+
+
+class SpecialType(Enum):
+    TOWN = auto()
+    GENERATOR = auto()
+    POWER_PLANT = auto()
+
+
+# TODO: placeholder values for every terrain type, replace with real ones
+TERRAIN_DEFAULTS = {
+    terrain: dict(
+        colour=(0.0, 0.0, 0.0),
+        burn_probability=0.0,
+        max_burn_duration=0,
+        water_percent=0.0,
+    )
+    for terrain in Terrain
+}
+
+
+@dataclass
+class Cell:
+    terrain: Terrain
+    colour: Tuple[float, float, float]  # RGB, each 0-1 (CAPyLE state_colors format)
+    burn_probability: float
+    remaining_burn_duration: int
+    max_burn_duration: int
+    special_type: Optional[SpecialType] = None  # None, TOWN or SOURCE
+    water_percent: float = 0.0  # 0.0-100.0, not validated
+    burn_state: BurnState = BurnState.UNBURNT
+
+    @classmethod
+    def from_terrain(cls, terrain, **overrides):
+        """Create a cell using the (placeholder) defaults for its terrain.
+        Any field can be overridden by keyword."""
+        values = dict(TERRAIN_DEFAULTS[terrain])
+        values.setdefault("remaining_burn_duration", values["max_burn_duration"])
+        values.update(overrides)
+        return cls(terrain=terrain, **values)
 
 
 def setup(args):
