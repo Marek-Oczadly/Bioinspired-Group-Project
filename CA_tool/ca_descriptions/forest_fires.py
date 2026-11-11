@@ -44,7 +44,7 @@ TERRAIN_DEFAULTS = {
         colour=(0.0, 0.0, 0.0),
         burn_probability=0.0,
         max_burn_duration=0,
-        water_percent=0.0,
+        water_fraction=0.0,
     )
     for terrain in Terrain
 }
@@ -55,10 +55,10 @@ class Cell:
     terrain: Terrain
     colour: Tuple[float, float, float]  # RGB, each 0-1 (CAPyLE state_colors format)
     burn_probability: float
-    remaining_burn_duration: int
-    max_burn_duration: int
-    special_type: Optional[SpecialType] = None  # None, TOWN or SOURCE
-    water_percent: float = 0.0  # 0.0-100.0, not validated
+    remaining_burn_duration: float
+    max_burn_duration: float
+    special_type: Optional[SpecialType] = None  # None, TOWN, GENERATOR, or POWER_PLANT
+    water_fraction: float = 0.0
     burn_state: BurnState = BurnState.UNBURNT
 
     @classmethod
