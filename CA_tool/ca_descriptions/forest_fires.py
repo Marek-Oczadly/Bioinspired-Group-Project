@@ -71,6 +71,54 @@ class Cell:
         return cls(terrain=terrain, **values)
 
 
+TERRAIN_CODES = {
+    "C": Terrain.CHAPARRAL,
+    "D": Terrain.DENSE_FOREST,
+    "S": Terrain.SCRUBLAND_CANYON,
+    "L": Terrain.LAKE,
+}
+
+SPECIAL_CODES = {
+    "T": SpecialType.TOWN,
+    "G": SpecialType.GENERATOR,
+    "P": SpecialType.POWER_PLANT,
+    "N": None,
+}
+
+
+def load_stage(path):
+    """Create a stage (a list of rows, each a list of Cells) from a text file.
+
+    Format: row major, cells separated by spaces, rows separated by newlines.
+    Each cell is two characters: a terrain code (C, D, S, L) followed by a
+    special type code (T, G, P, N for none), e.g. "DN LN CT".
+    All cells start unburnt. Blank lines are ignored.
+
+    Raises ValueError on an unknown code or if rows differ in length.
+    """
+    stage = []
+    with open(path, "r") as f:
+        for line_num, line in enumerate(f, start=1):
+            tokens = line.split()
+            if not tokens:
+                continue
+            row = []
+            for token in tokens:
+                if (len(token) != 2 or token[0] not in TERRAIN_CODES
+                        or token[1] not in SPECIAL_CODES):
+                    raise ValueError(
+                        "Invalid cell {!r} on line {}".format(token, line_num))
+                row.append(Cell.from_terrain(
+                    TERRAIN_CODES[token[0]],
+                    special_type=SPECIAL_CODES[token[1]]))
+            if stage and len(row) != len(stage[0]):
+                raise ValueError(
+                    "Line {} has {} cells, expected {}".format(
+                        line_num, len(row), len(stage[0])))
+            stage.append(row)
+    return stage
+
+
 def setup(args):
     """Set up the config object used to interact with the GUI"""
     config_path = args[0]
