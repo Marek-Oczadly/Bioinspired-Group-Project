@@ -12,6 +12,8 @@ sys.path.append(main_dir_loc + 'capyle/ca')
 sys.path.append(main_dir_loc + 'capyle/guicomponents')
 # ---
 
+import os
+import numpy as np
 from capyle.ca import Grid2D, Neighbourhood, randomise2d
 import capyle.utils as utils
 from dataclasses import dataclass
@@ -38,10 +40,27 @@ class SpecialType(Enum):
     POWER_PLANT = auto()
 
 
-# TODO: placeholder values for every terrain type, replace with real ones
+# Colours are sampled from the reference map (forest_fires_meta/town.png).
+TERRAIN_COLOURS = {
+    Terrain.CHAPARRAL: (0.75, 0.76, 0.24),
+    Terrain.DENSE_FOREST: (0.31, 0.38, 0.18),
+    Terrain.SCRUBLAND_CANYON: (1.0, 1.0, 0.5),
+    Terrain.LAKE: (0.0, 0.69, 0.94),
+}
+
+# Special cells are drawn on top of their terrain. The reference map marks
+# the town, power plant and incinerator in black.
+SPECIAL_COLOURS = {
+    SpecialType.TOWN: (0.0, 0.0, 0.0),
+    SpecialType.INCINERATOR: (0.0, 0.0, 0.0),
+    SpecialType.POWER_PLANT: (0.0, 0.0, 0.0),
+}
+
+# TODO: placeholder values for the burn properties of every terrain type,
+# replace with real ones
 TERRAIN_DEFAULTS = {
     terrain: dict(
-        colour=(0.0, 0.0, 0.0),
+        colour=TERRAIN_COLOURS[terrain],
         burn_probability=0.0,
         max_burn_duration=0,
         water_fraction=0.0,
@@ -119,6 +138,27 @@ def load_stage(path):
     return stage
 
 
+STAGE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "forest_fires_meta", "town.txt")
+
+DISPLAY_KEYS = list(Terrain) + list(SpecialType)
+STATES = list(range(len(DISPLAY_KEYS)))  # number for each
+STATE_COLOURS = ([TERRAIN_COLOURS[terrain] for terrain in Terrain]
+                 + [SPECIAL_COLOURS[special] for special in SpecialType]) # colour for each
+
+
+def display_state(cell):
+    """The numeric grid state used to draw a cell. A special type (town,
+    incinerator, power plant) hides the terrain underneath it."""
+    key = cell.special_type if cell.special_type is not None else cell.terrain
+    return DISPLAY_KEYS.index(key)
+
+
+def stage_to_grid(stage):
+    """Convert a stage (list of rows of Cells) to a numeric numpy grid."""
+    return np.array([[display_state(cell) for cell in row] for row in stage])
+
+
 def setup(args):
     """Set up the config object used to interact with the GUI"""
     config_path = args[0]
@@ -131,8 +171,10 @@ def setup(args):
 
     # ---- Override the defaults below (these may be changed at anytime) ----
 
-    # config.state_colors = [(0,0,0),(1,1,1)]
-    # config.grid_dims = (200,200)
+    config.state_colors = STATE_COLOURS
+    initial_grid = stage_to_grid(load_stage(STAGE_PATH))
+    config.grid_dims = initial_grid.shape
+    config.initial_grid = initial_grid
 
     # ----------------------------------------------------------------------
 
@@ -148,7 +190,7 @@ def setup(args):
 def transition_function(grid, neighbourstates, neighbourcounts):
     """Function to apply the transition rules
     and return the new grid"""
-    # YOUR CODE HERE
+    # TODO: That actual transition logic currently its placeholder
     return grid
 
 
