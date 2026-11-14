@@ -1,4 +1,4 @@
-# Name: NAME
+# Name: Forest Fires
 # Dimensions: 2
 
 # --- Set up executable path, do not edit ---
@@ -34,7 +34,7 @@ class BurnState(Enum):
 
 class SpecialType(Enum):
     TOWN = auto()
-    GENERATOR = auto()
+    INCINERATOR = auto()
     POWER_PLANT = auto()
 
 
@@ -57,7 +57,7 @@ class Cell:
     burn_probability: float
     remaining_burn_duration: float
     max_burn_duration: float
-    special_type: Optional[SpecialType] = None  # None, TOWN, GENERATOR, or POWER_PLANT
+    special_type: Optional[SpecialType] = None  # None, TOWN, INCINERATOR, or POWER_PLANT
     water_fraction: float = 0.0
     burn_state: BurnState = BurnState.UNBURNT
 
@@ -80,7 +80,7 @@ TERRAIN_CODES = {
 
 SPECIAL_CODES = {
     "T": SpecialType.TOWN,
-    "G": SpecialType.GENERATOR,
+    "I": SpecialType.INCINERATOR,
     "P": SpecialType.POWER_PLANT,
     "N": None,
 }
@@ -91,7 +91,7 @@ def load_stage(path):
 
     Format: row major, cells separated by spaces, rows separated by newlines.
     Each cell is two characters: a terrain code (C, D, S, L) followed by a
-    special type code (T, G, P, N for none), e.g. "DN LN CT".
+    special type code (T, I, P, N for none), e.g. "DN LN CT".
     All cells start unburnt. Blank lines are ignored.
 
     Raises ValueError on an unknown code or if rows differ in length.
@@ -124,7 +124,7 @@ def setup(args):
     config_path = args[0]
     config = utils.load(config_path)
     # -- THE CA MUST BE RELOADED IN THE GUI IF ANY OF THE BELOW ARE CHANGED --
-    config.title = "NAME"
+    config.title = "Forest Fires"
     config.dimensions = 2
     config.states = STATES
     # -------------------------------------------------------------------------
