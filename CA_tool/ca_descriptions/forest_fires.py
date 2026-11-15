@@ -12,6 +12,7 @@ sys.path.append(main_dir_loc + 'capyle/ca')
 sys.path.append(main_dir_loc + 'capyle/guicomponents')
 # ---
 
+import math
 import os
 import numpy as np
 from capyle.ca import Grid2D, Neighbourhood, randomise2d
@@ -23,6 +24,30 @@ from typing import Optional, Tuple
 # Edit these to change which cells the burning starts from.
 BURN_INCINERATOR: bool = True
 BURN_POWER_PLANT: bool = True
+
+# Direction the wind comes FROM, in degrees clockwise from north (the usual
+# meteorological convention): 0 = northerly, 90 = easterly, 180 = southerly,
+# 270 = westerly. The reference map shows a northerly wind.
+WIND_DIRECTION: float = 0.0
+
+
+def wind_components(direction):
+    """Convert a wind direction (degrees, as WIND_DIRECTION) into two
+    perpendicular components, each between -1 and 1, for the way the wind
+    is BLOWING TOWARDS:
+
+        east:  +1 blowing fully east,  -1 fully west
+        north: +1 blowing fully north, -1 fully south
+
+    A northerly wind (0 degrees) blows south, giving (east=0, north=-1).
+    Any float is accepted; it is wrapped into 0-360. Note grid row 0 is the
+    north edge of the stage, so "north" points towards decreasing row index.
+    """
+    radians = math.radians(direction % 360)
+    east = -math.sin(radians)
+    north = -math.cos(radians)
+    return east, north
+
 
 class Terrain(Enum):
     CHAPARRAL = auto()
