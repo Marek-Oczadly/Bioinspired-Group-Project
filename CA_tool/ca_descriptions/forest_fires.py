@@ -49,6 +49,40 @@ def wind_components(direction):
     return east, north
 
 
+# The 8 neighbours in the order Grid2D hands them to the transition function
+# (neighbourstates: NW, N, NE, W, E, SW, S, SE), as the (east, north) offset
+# of each neighbour from the cell.
+MOORE_OFFSETS = ((-1, 1), (0, 1), (1, 1),
+                     (-1, 0), (1, 0),
+                     (-1, -1), (0, -1), (1, -1))
+
+
+def wind_multipliers(east, north, offsets=MOORE_OFFSETS):
+    """How much the wind helps fire spread into a cell from each neighbour.
+
+    east, north: the wind components from wind_components().
+    offsets: the neighbour arrangement, (east, north) offsets of each
+        neighbour arrangement, (east, north) offsets of each
+        neighbour from the cell (default: MOORE_OFFSETS, which matches
+        neighbourstates[k]).
+
+    Returns a tuple of wind multipliers 0-1 for each neigbouring cell
+
+   Cache this bc the wind doesnt change
+    """
+    multipliers = []
+    for offset_east, offset_north in offsets:
+        length = math.hypot(offset_east, offset_north)
+        # Fire travels from the neighbour to the cell: opposite to the offset
+        travel_east = -offset_east / length
+        travel_north = -offset_north / length
+        alignment = travel_east * east + travel_north * north
+        multipliers.append(max(0.0, round(alignment, 10)))  # ReLU
+    multipliers = np.array(multipliers)
+    multipliers.setflags(write=False)
+    return multipliers
+
+
 class Terrain(Enum):
     CHAPARRAL = auto()
     DENSE_FOREST = auto()
@@ -271,9 +305,10 @@ def setup(args):
     return config
 
 
-def transition_function(grid, neighbourstates, neighbourcounts):
+def transition_function(grid, neighbourstates, neighbourcounts, multipliers):
     """Function to apply the transition rules
-    and return the new grid"""
+    and return the new grid. multipliers are the wind multipliers from
+    wind_multipliers(), one per neighbour in the order of neighbourstates."""
     # TODO: That actual transition logic currently its placeholder
     return grid
 
@@ -283,8 +318,12 @@ def main():
     # Get the config object from set up
     config = setup(sys.argv[1:])
 
+    # The wind is fixed for the whole run, so work out the multipliers once
+    # here and hand them to every call of the transition function.
+    multipliers = wind_multipliers(*wind_components(WIND_DIRECTION))
+
     # Create grid object using parameters from config + transition function
-    grid = Grid2D(config, transition_function)
+    grid = Grid2D(config, (transition_function, multipliers))
 
     # Run the CA, save grid state every generation to timeline
     timeline = grid.run()
