@@ -30,6 +30,12 @@ BURN_POWER_PLANT: bool = True
 # 270 = westerly. The reference map shows a northerly wind.
 WIND_DIRECTION: float = 0.0
 
+# Wind speed in km/h. TODO: placeholder value, replace with the real one.
+WIND_SPEED: float = 10.0
+
+# The forward spread rate of the fire is about 10% of the wind speed in km/h.
+WIND_SPREAD_FRACTION: float = 0.1
+
 
 def wind_components(direction):
     """Convert a wind direction (degrees, as WIND_DIRECTION) into two
@@ -57,19 +63,17 @@ MOORE_OFFSETS = ((-1, 1), (0, 1), (1, 1),
                      (-1, -1), (0, -1), (1, -1))
 
 
-def wind_multipliers(east, north, offsets=MOORE_OFFSETS):
-    """How much the wind helps fire spread into a cell from each neighbour.
+def wind_multipliers(east, north, speed, offsets=MOORE_OFFSETS):
+    """How much the wind boosts fire spread into a cell from each neighbour.
 
     east, north: the wind components from wind_components().
+    speed: the wind speed in km/h (as WIND_SPEED).
     offsets: the neighbour arrangement, (east, north) offsets of each
-        neighbour arrangement, (east, north) offsets of each
-        neighbour from the cell (default: MOORE_OFFSETS, which matches
+        neighbour from the cell (default: MOORE_OFFSETS, which matches the
+        order of neighbourstates, so index k lines up with
         neighbourstates[k]).
-
-    Returns a tuple of wind multipliers 0-1 for each neigbouring cell
-
-   Cache this bc the wind doesnt change
     """
+    forward_spread_rate = WIND_SPREAD_FRACTION * speed
     multipliers = []
     for offset_east, offset_north in offsets:
         length = math.hypot(offset_east, offset_north)
@@ -77,7 +81,7 @@ def wind_multipliers(east, north, offsets=MOORE_OFFSETS):
         travel_east = -offset_east / length
         travel_north = -offset_north / length
         alignment = travel_east * east + travel_north * north
-        multipliers.append(max(0.0, round(alignment, 10)))  # ReLU
+        multipliers.append(forward_spread_rate * max(0.0, round(alignment, 10)))  # ReLU, then scale
     multipliers = np.array(multipliers)
     multipliers.setflags(write=False)
     return multipliers
@@ -320,7 +324,8 @@ def main():
 
     # The wind is fixed for the whole run, so work out the multipliers once
     # here and hand them to every call of the transition function.
-    multipliers = wind_multipliers(*wind_components(WIND_DIRECTION))
+    multipliers = wind_multipliers(*wind_components(WIND_DIRECTION),
+                                   WIND_SPEED)
 
     # Create grid object using parameters from config + transition function
     grid = Grid2D(config, (transition_function, multipliers))
