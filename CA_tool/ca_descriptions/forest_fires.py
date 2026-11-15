@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional, Tuple
 
+# Edit these to change which cells the burning starts from.
+BURN_INCINERATOR: bool = True
+BURN_POWER_PLANT: bool = True
 
 class Terrain(Enum):
     CHAPARRAL = auto()
@@ -38,6 +41,14 @@ class SpecialType(Enum):
     TOWN = auto()
     INCINERATOR = auto()
     POWER_PLANT = auto()
+
+
+# The ignition points for the fire. Edit the bools at the top rather than this
+IGNITION_POINTS = tuple(
+    point for point, burn in ((SpecialType.INCINERATOR, BURN_INCINERATOR),
+                              (SpecialType.POWER_PLANT, BURN_POWER_PLANT))
+    if burn
+)
 
 
 # Colours are sampled from the reference map (forest_fires_meta/town.png).
@@ -159,6 +170,14 @@ def load_stage(path):
     return stage
 
 
+def begin_ignition(stage, ignition_points):
+    """Set every cell whose special type is in ignition_points burning."""
+    for row in stage:
+        for cell in row:
+            if cell.special_type in ignition_points:
+                cell.burn_state = BurnState.BURNING
+
+
 STAGE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "forest_fires_meta", "town.txt")
 
@@ -210,7 +229,9 @@ def setup(args):
     # ---- Override the defaults below (these may be changed at anytime) ----
 
     config.state_colors = STATE_COLOURS
-    initial_grid = stage_to_grid(load_stage(STAGE_PATH))
+    stage = load_stage(STAGE_PATH)
+    begin_ignition(stage, IGNITION_POINTS)
+    initial_grid = stage_to_grid(stage)
     config.grid_dims = initial_grid.shape
     config.initial_grid = initial_grid
 
