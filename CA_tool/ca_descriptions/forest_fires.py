@@ -48,13 +48,34 @@ TERRAIN_COLOURS = {
     Terrain.LAKE: (0.0, 0.69, 0.94),
 }
 
-# Special cells are drawn on top of their terrain. The reference map marks
-# the town, power plant and incinerator in black.
+# Special cells are drawn on top of their terrain, in grey.
 SPECIAL_COLOURS = {
-    SpecialType.TOWN: (0.0, 0.0, 0.0),
-    SpecialType.INCINERATOR: (0.0, 0.0, 0.0),
-    SpecialType.POWER_PLANT: (0.0, 0.0, 0.0),
+    SpecialType.TOWN: (0.5, 0.5, 0.5),
+    SpecialType.INCINERATOR: (0.5, 0.5, 0.5),
+    SpecialType.POWER_PLANT: (0.5, 0.5, 0.5),
 }
+
+# A burning cell is a strong orange, shifted per terrain so you can still tell
+# what is burning: darker/redder for dense forest, yellower for scrubland.
+BURNING_COLOURS = {
+    Terrain.CHAPARRAL: (1.0, 0.55, 0.05),
+    Terrain.DENSE_FOREST: (0.85, 0.28, 0.0),
+    Terrain.SCRUBLAND_CANYON: (1.0, 0.72, 0.0),
+    Terrain.LAKE: (1.0, 0.45, 0.35),  # lakes should not burn; here for completeness
+}
+
+# A burnt cell is a blackened version of its terrain colour: the terrain
+# colour scaled down so it is still recognisably that tile.
+BURNT_DARKNESS = 0.35
+
+
+def blacken(colour):
+    """Darken an RGB colour towards black."""
+    return tuple(channel * BURNT_DARKNESS for channel in colour)
+
+
+BURNT_COLOURS = {terrain: blacken(colour)
+                 for terrain, colour in TERRAIN_COLOURS.items()}
 
 # TODO: placeholder values for the burn properties of every terrain type,
 # replace with real ones
@@ -141,16 +162,33 @@ def load_stage(path):
 STAGE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "forest_fires_meta", "town.txt")
 
-DISPLAY_KEYS = list(Terrain) + list(SpecialType)
+# Each distinct look gets one key:
+#   Terrain / SpecialType   an unburnt cell
+#   (Terrain, BURNING)      a burning cell, coloured per terrain
+#   (Terrain, BURNT)       a burnt cell, a blackened version of its terrain
+DISPLAY_COLOURS = {}
+DISPLAY_COLOURS.update(TERRAIN_COLOURS)
+DISPLAY_COLOURS.update(SPECIAL_COLOURS)
+DISPLAY_COLOURS.update({(terrain, BurnState.BURNING): colour
+                        for terrain, colour in BURNING_COLOURS.items()})
+DISPLAY_COLOURS.update({(terrain, BurnState.BURNT): colour
+                        for terrain, colour in BURNT_COLOURS.items()})
+
+DISPLAY_KEYS = list(DISPLAY_COLOURS)
 STATES = list(range(len(DISPLAY_KEYS)))  # number for each
-STATE_COLOURS = ([TERRAIN_COLOURS[terrain] for terrain in Terrain]
-                 + [SPECIAL_COLOURS[special] for special in SpecialType]) # colour for each
+STATE_COLOURS = [DISPLAY_COLOURS[key] for key in DISPLAY_KEYS]  # colour for each
 
 
 def display_state(cell):
-    """The numeric grid state used to draw a cell. A special type (town,
-    incinerator, power plant) hides the terrain underneath it."""
-    key = cell.special_type if cell.special_type is not None else cell.terrain
+    """The numeric grid state used to draw a cell. Burning and burnt cells
+    show their burn colour; an unburnt special type (town, incinerator, power
+    plant) hides the terrain underneath it."""
+    if cell.burn_state != BurnState.UNBURNT:
+        key = (cell.terrain, cell.burn_state)
+    elif cell.special_type is not None:
+        key = cell.special_type
+    else:
+        key = cell.terrain
     return DISPLAY_KEYS.index(key)
 
 
