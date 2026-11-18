@@ -1,0 +1,7 @@
+{
+  "runs": 1,
+  "generations": 100,
+  "workers": 1,
+  "grid_size": [200, 200],
+  "seed": 42
+}
