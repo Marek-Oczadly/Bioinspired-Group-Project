@@ -308,6 +308,9 @@ class FireData:
     burning_state: np.ndarray  # grid state when burning
     burnt_state: np.ndarray  # grid state when burnt out
 
+    town_mask: np.ndarray
+    town_reached: bool = False
+
     @classmethod
     def from_stage(cls, stage):
         def per_cell(get_value):
@@ -318,7 +321,12 @@ class FireData:
             return per_cell(lambda cell: display_state(
                 replace(cell, burn_state=burn_state)))
 
+        town_mask = per_cell(
+            lambda cell: cell.special_type == SpecialType.TOWN).astype(bool)
         return cls(
+            town_mask=town_mask,
+            town_reached=bool(np.any(town_mask & per_cell(
+                lambda cell: cell.burn_state == BurnState.BURNING).astype(bool))),
             ignite_probability=per_cell(lambda cell: cell.burn_probability),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
             burn_time=np.zeros((len(stage), len(stage[0]))),
@@ -414,6 +422,9 @@ def transition_function(grid, neighbourstates, neighbourcounts,
 
     grid[burnt_out] = fire.burnt_state[burnt_out]
     grid[ignited] = fire.burning_state[ignited]
+
+    # 4. Update whether the fire has reached any town cells
+    fire.town_reached = fire.town_reached or bool(np.any(ignited & fire.town_mask))
     return grid
 
 

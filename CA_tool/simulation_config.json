@@ -1,7 +1,7 @@
 {
-  "runs": 1,
-  "generations": 100,
-  "workers": 1,
-  "grid_size": [200, 200],
+  "runs": 12,
+  "generations": 2500,
+  "workers": 12,
+  "grid_size": [100, 100],
   "seed": 42
 }
