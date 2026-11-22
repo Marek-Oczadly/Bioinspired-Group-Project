@@ -18,6 +18,9 @@ import os
 import numpy as np
 from capyle.ca import Grid2D, Neighbourhood, randomise2d
 import capyle.utils as utils
+from ca_utils import (MOORE_OFFSETS, ft_per_min_to_kmh, kmh_to_ft_per_min,
+                      neighbour_distances, values_at_neighbours,
+                      wind_components)
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Optional, Tuple
@@ -35,65 +38,16 @@ CONFIG = load_json("config.json")
 
 STAGE_PATH = os.path.join(META_DIR, CONFIG["stage_file"])
 
-HOURS_PER_STEP = CONFIG["hours_per_step"]
-PEAK_SPREAD_CHANCE_PER_HOUR = CONFIG["peak_spread_chance_per_hour"]
-WIND_SPREAD_FRACTION = CONFIG["wind_spread_fraction"]
+CELL_SIZE_KM = CONFIG["cell_size_km"]
 WIND_FOCUS_PER_KMH = CONFIG["wind_focus_per_kmh"]
-NEUTRAL_WIND_MULTIPLIER = CONFIG["neutral_wind_multiplier"]
 BURNT_DARKNESS = CONFIG["burnt_darkness"]
 
 
-def wind_components(direction):
-    """Split a wind direction (degrees, see RunConstants) into east and north
-    components, each -1 to 1, for the way the wind is BLOWING TOWARDS."""
-    radians = math.radians(direction % 360)
-    east = -math.sin(radians)
-    north = -math.cos(radians)
-    return east, north
+FALLBACK_HOURS_PER_STEP = 1.0
+# Float slack so a front that should arrive exactly this step isn't a hair short
+PROGRESS_TOLERANCE = 1e-9
 
-
-# (NW, N, NE, W, E, SW, S, SE)
-MOORE_OFFSETS = ((-1, 1), (0, 1), (1, 1),
-                     (-1, 0), (1, 0),
-                     (-1, -1), (0, -1), (1, -1))
-
-
-def wind_multipliers(east, north, speed, offsets=MOORE_OFFSETS):
-    """How much the wind boosts fire spread into a cell from each neighbour.
-
-    east, north: the wind components from wind_components().
-    speed: the wind speed in km/h.
-    offsets: (east, north) offset of each neighbour; the result lines up with
-        neighbourstates.
-
-    Returns a read-only array with one multiplier per neighbour:
-        multiplier = NEUTRAL_WIND_MULTIPLIER * e^effect
-    so it is neutral (0.5) when the wind is absent or perpendicular, shrinks
-    towards 0 upwind and grows without limit downwind.
-
-    effect = forward spread rate * focused alignment, where the forward spread
-    rate is WIND_SPREAD_FRACTION of the wind speed. The alignment is the
-    cosine between the wind and the fire's direction of travel, raised
-    (keeping its sign) to 1 + WIND_FOCUS_PER_KMH * speed. Stronger wind means
-    a bigger power, so the effect on diagonals shrinks faster than along the
-    wind axis.
-    """
-    forward_spread_rate = WIND_SPREAD_FRACTION * speed
-    focus_power = 1 + WIND_FOCUS_PER_KMH * speed
-    multipliers = []
-    for offset_east, offset_north in offsets:
-        length = math.hypot(offset_east, offset_north)
-        # Fire travels from the neighbour into the cell, opposite the offset
-        travel_east = -offset_east / length
-        travel_north = -offset_north / length
-        alignment = round(travel_east * east + travel_north * north, 10)
-        focused_alignment = math.copysign(abs(alignment) ** focus_power,
-                                          alignment)
-        effect = forward_spread_rate * focused_alignment
-        multipliers.append(NEUTRAL_WIND_MULTIPLIER * math.exp(effect))
-    multipliers = np.array(multipliers)
-    multipliers.setflags(write=False)
-    return multipliers
+DIRECTION_NAMES = ("NW", "N", "NE", "W", "E", "SW", "S", "SE")
 
 
 class Terrain(Enum):
@@ -122,11 +76,18 @@ class RunConstants:
     wind_direction: where the wind comes FROM, in degrees clockwise from
         north (0 = northerly, 90 = easterly, ...).
     wind_speed: km/h.
+    spread_randomness: how much each fire front's speed varies at random, as
+        a fraction of its Rothermel speed (0 = none, 0.3 = about 30%). The
+        average speed is unchanged.
+    random_seed: a whole number to repeat a run exactly, or null for a
+        different run each time.
     """
     burn_incinerator: bool
     burn_power_plant: bool
     wind_direction: float
     wind_speed: float
+    spread_randomness: float = 0.0
+    random_seed: Optional[int] = None
 
     @property
     def ignition_points(self):
@@ -166,16 +127,12 @@ def blacken(colour):
 BURNT_COLOURS = {terrain: blacken(colour)
                  for terrain, colour in TERRAIN_COLOURS.items()}
 
-# TODO: the burn properties in config.json are placeholders
-# Chance (0-1) of catching fire, before the wind multiplier is applied
-IGNITE_PROBABILITY = terrain_setting("ignite_probability")
 # Hours a cell burns before burning out
 BURN_DURATION_HOURS = terrain_setting("burn_duration_hours")
 
 TERRAIN_DEFAULTS = {
     terrain: dict(
         colour=TERRAIN_COLOURS[terrain],
-        burn_probability=IGNITE_PROBABILITY[terrain],
         max_burn_duration=BURN_DURATION_HOURS[terrain],
         water_fraction=0.0,
     )
@@ -187,7 +144,6 @@ TERRAIN_DEFAULTS = {
 class Cell:
     terrain: Terrain
     colour: Tuple[float, float, float]  # RGB, each 0-1
-    burn_probability: float
     remaining_burn_duration: float
     max_burn_duration: float
     special_type: Optional[SpecialType] = None
@@ -297,19 +253,202 @@ def build_stage(ignition_points):
     return stage
 
 
+@dataclass(frozen=True)
+class FuelModel:
+    """The Rothermel (1972) inputs for one terrain, from Anderson's fuel
+    models. Rothermel works in ft/min; see "Statistics Needed for Model
+    Design.doc" on the drive for where the values come from."""
+    heat_released: float
+    share_reaching_fuel: float  # share of the heat reaching unburnt fuel
+    heat_to_ignite: float
+    wind_constant: float  # a
+    wind_power: float  # b
+    packing_term: float  # p
+    wind_factor: float  # share of the open wind reaching the flames
+    slope_constant: float  # k
+    slope_degrees: float
+
+    @property
+    def no_wind_rate(self):
+        """R0: the spread rate on flat ground with no wind, in ft/min."""
+        return (self.heat_released * self.share_reaching_fuel
+                / self.heat_to_ignite)
+
+    @property
+    def slope_boost(self):
+        """S = k * tan(slope)^2"""
+        return (self.slope_constant
+                * math.tan(math.radians(self.slope_degrees)) ** 2)
+
+
+FUEL_MODELS = {terrain: FuelModel(**fuel)
+               for terrain, fuel in terrain_setting("fuel").items()}
+
+
+def rothermel_rate_kmh(fuel, wind_kmh, alignment=1.0):
+    """Fire spread rate (km/h) through a fuel: R = R0 * (1 + W + S).
+
+    alignment: cosine between the wind and the fire's direction of travel
+        (1 = head fire, running with the wind). The wind boost W is scaled by
+        alignment raised to 1 + WIND_FOCUS_PER_KMH * wind speed, so it fades
+        off-axis (faster in a stronger wind) and is 0 across or against the
+        wind. Flank and backing fires then spread at the no-wind rate.
+
+    W = a * U^b * p, where U is the open wind (ft/min) * wind factor.
+    """
+    midflame_wind = kmh_to_ft_per_min(wind_kmh) * fuel.wind_factor
+    wind_boost = (fuel.wind_constant * midflame_wind ** fuel.wind_power
+                  * fuel.packing_term)
+    focus_power = 1 + WIND_FOCUS_PER_KMH * wind_kmh
+    wind_boost *= max(0.0, alignment) ** focus_power
+    return ft_per_min_to_kmh(
+        fuel.no_wind_rate * (1 + wind_boost + fuel.slope_boost))
+
+
+def travel_alignments(east, north, offsets=MOORE_OFFSETS):
+    """Cosine between the wind and the fire's direction of travel into a cell
+    from each neighbour, in the order of offsets.
+
+    east, north: the wind components from wind_components().
+    """
+    alignments = []
+    for offset_east, offset_north in offsets:
+        length = math.hypot(offset_east, offset_north)
+        # Fire travels from the neighbour into the cell, opposite the offset
+        travel_east = -offset_east / length
+        travel_north = -offset_north / length
+        alignments.append(
+            round(travel_east * east + travel_north * north, 10))
+    return alignments
+
+
+def harmonic_mean(first, second):
+    """Element-wise harmonic mean, 0 wherever either value is 0."""
+    total = first + second
+    return np.divide(2 * first * second, total,
+                     out=np.zeros_like(total), where=total > 0)
+
+
+def directional_rates(stage, run):
+    """How fast fire spreads into each cell from each neighbour.
+
+    Returns one array per neighbour (in the order of MOORE_OFFSETS) holding,
+    for every cell, the fraction of the gap to that neighbour crossed per hour
+    when the neighbour is burning.
+
+    A fire crossing between two cells spends half the gap in each, so its
+    speed is the harmonic mean of the two terrains' rates. Inside one terrain
+    that is just the terrain's rate; against a lake it is 0.
+    """
+    wind_east, wind_north = wind_components(run.wind_direction)
+    alignments = travel_alignments(wind_east, wind_north)
+    distances = neighbour_distances(CELL_SIZE_KM)
+
+    rates = []
+    for offset, alignment, distance in zip(MOORE_OFFSETS, alignments,
+                                           distances):
+        speed_by_terrain = {
+            terrain: rothermel_rate_kmh(
+                FUEL_MODELS[terrain], run.wind_speed, alignment)
+            for terrain in Terrain}
+        own_speed = np.array([[speed_by_terrain[cell.terrain] for cell in row]
+                              for row in stage])
+        neighbour_speed = values_at_neighbours(own_speed, (offset,))[0]
+        rates.append(harmonic_mean(own_speed, neighbour_speed) / distance)
+    return rates
+
+
+def spread_noise(shape, randomness, seed=None):
+    """A random speed multiplier for every cell and neighbour direction.
+
+    Lognormal, so it is never negative, and shifted to have a mean of 1 so the
+    average spread rate is still the Rothermel rate. It is drawn once per run
+    (not every step), so how random the fire is doesn't depend on the time
+    per step. randomness is the spread of the log of the multiplier; 0 gives
+    exactly 1 everywhere.
+    """
+    if randomness <= 0:
+        return np.ones(shape)
+    return np.random.default_rng(seed).lognormal(
+        mean=-randomness ** 2 / 2, sigma=randomness, size=shape)
+
+
+def format_duration(hours):
+    return "{:.1f} min".format(hours * 60) if hours < 1 \
+        else "{:.2f} h".format(hours)
+
+
+@dataclass(frozen=True)
+class TimeStep:
+    hours: float
+    reason: str  # what limits it, for display
+
+
+def choose_time_step(rates, stage):
+    """The time per generation: how long the fastest fire front takes to
+    cross exactly one gap between neighbouring cells.
+
+    The CA can only move fire one cell per step, so any longer step would
+    slow the fastest fire down. Slower fronts need several steps per gap.
+    """
+    fastest = max(range(len(rates)), key=lambda d: rates[d].max())
+    fastest_rate = rates[fastest].max()
+    if fastest_rate <= 0:
+        return TimeStep(FALLBACK_HOURS_PER_STEP, "no fire can spread")
+
+    row, col = np.unravel_index(rates[fastest].argmax(),
+                                rates[fastest].shape)
+    distance = neighbour_distances(CELL_SIZE_KM)[fastest]
+    reason = "{} spreading in from the {} at {:.3f} km/h over {:.2f} km".format(
+        stage[row][col].terrain.name, DIRECTION_NAMES[fastest],
+        fastest_rate * distance, distance)
+    return TimeStep(1 / fastest_rate, reason)
+
+
+def describe_run(run, time_step):
+    """Text for the console: the wind, the spread speeds and the time step."""
+    lines = ["Wind {:.1f} km/h from {:.0f} degrees".format(
+        run.wind_speed, run.wind_direction)]
+    for terrain in Terrain:
+        fuel = FUEL_MODELS[terrain]
+        lines.append(
+            "  {:<17} head fire {:.3f} km/h, no wind {:.3f} km/h, "
+            "burns {} h".format(
+                terrain.name,
+                rothermel_rate_kmh(fuel, run.wind_speed),
+                rothermel_rate_kmh(fuel, 0.0),
+                BURN_DURATION_HOURS[terrain]))
+    lines.append("Time per step: {} ({:.4f} h), set by {}".format(
+        format_duration(time_step.hours), time_step.hours, time_step.reason))
+    lines.append("Steps per day: {:.0f}".format(24 / time_step.hours))
+    lines.append("Spread randomness: {:.2f} ({})".format(
+        run.spread_randomness,
+        "seed {}".format(run.random_seed) if run.random_seed is not None
+        else "different every run"))
+    return "\n".join(lines)
+
+
 @dataclass
 class FireData:
     """Per-cell data (arrays shaped like the grid) that the grid's single
-    state number can't hold. The transition function updates burn_time and
-    ignite_probability."""
-    ignite_probability: np.ndarray  # 0 once burnt out
+    state number can't hold. The transition function updates front_progress,
+    caught_fire, burn_time and head_start."""
+    rates: np.ndarray  # from directional_rates(), indexed [neighbour, row, col]
+    time_step: TimeStep
+    front_progress: np.ndarray  # 0-1 per neighbour: how far its front has got
+    caught_fire: np.ndarray  # bool, True once ignited (or burning from the start)
     burn_duration: np.ndarray  # hours
     burn_time: np.ndarray  # hours burnt so far
+    head_start: np.ndarray  # hours burnt that the neighbours haven't counted
     burning_state: np.ndarray  # grid state when burning
     burnt_state: np.ndarray  # grid state when burnt out
 
+    @property
+    def hours_per_step(self):
+        return self.time_step.hours
+
     @classmethod
-    def from_stage(cls, stage):
+    def from_stage(cls, stage, run):
         def per_cell(get_value):
             return np.array([[get_value(cell) for cell in row]
                              for row in stage], dtype=float)
@@ -318,10 +457,23 @@ class FireData:
             return per_cell(lambda cell: display_state(
                 replace(cell, burn_state=burn_state)))
 
+        rates = np.array(directional_rates(stage, run))
+        # The step comes from the noise-free speeds, so it stays the time the
+        # fastest typical front takes to cross a cell. A front that happens to
+        # draw a big multiplier still crosses at most one cell per step.
+        time_step = choose_time_step(rates, stage)
+        rates *= spread_noise(rates.shape, run.spread_randomness,
+                              run.random_seed)
         return cls(
-            ignite_probability=per_cell(lambda cell: cell.burn_probability),
+            rates=rates,
+            time_step=time_step,
+            front_progress=np.zeros(rates.shape),
+            caught_fire=per_cell(
+                lambda cell: cell.burn_state != BurnState.UNBURNT
+            ).astype(bool),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
             burn_time=np.zeros((len(stage), len(stage[0]))),
+            head_start=np.zeros((len(stage), len(stage[0]))),
             burning_state=state_when(BurnState.BURNING),
             burnt_state=state_when(BurnState.BURNT),
         )
@@ -343,9 +495,15 @@ def setup(args):
     # The stage has real edges, so fire must not wrap around
     config.wrap = False
     run = load_run_constants()
-    initial_grid = stage_to_grid(build_stage(run.ignition_points))
+    stage = build_stage(run.ignition_points)
+    initial_grid = stage_to_grid(stage)
     config.grid_dims = initial_grid.shape
     config.initial_grid = initial_grid
+
+    # The time per step comes from the spread speeds, so tell the user what
+    # one generation means (the GUI shows what a description prints)
+    fire = FireData.from_stage(stage, run)
+    print(describe_run(run, fire.time_step))
 
     # ----------------------------------------------------------------------
 
@@ -358,60 +516,58 @@ def setup(args):
     return config
 
 
-def spread_chance_per_hour(fraction_burnt):
-    """Chance per hour that a burning cell spreads, given how far through its
-    burn time it is (0 = just ignited, 1 = burnt out).
+def transition_function(grid, neighbourstates, neighbourcounts, fire):
+    """Apply one step of fire to the grid and return the new grid. There is
+    no randomness: the same run always burns the same way.
 
-    Starts at 0, peaks at PEAK_SPREAD_CHANCE_PER_HOUR two-thirds of the way
-    through, and returns to 0. x^2 (1 - x) peaks at 4/27, hence the division.
-    """
-    x = np.clip(fraction_burnt, 0.0, 1.0)
-    return PEAK_SPREAD_CHANCE_PER_HOUR * x ** 2 * (1 - x) / (4 / 27)
+    fire: per-cell burn data and spread rates, updated in place. One step is
+        fire.hours_per_step hours.
 
+    1. Each burning neighbour is a separate fire front moving into a cell,
+       and each front keeps its own progress (the fraction of the gap to the
+       cell it has crossed). Progress is kept if the neighbour burns out,
+       since the front stays where it got to.
+    2. A cell catches fire when its first front crosses the gap (progress 1).
+       Fronts don't add up: a second neighbour doesn't speed the first.
+    3. Burning cells age and burn out after their terrain's burn duration.
 
-def values_at_neighbours(array, offsets=MOORE_OFFSETS):
-    """For each offset, an array whose value at a cell is `array` at that
-    neighbour (False beyond the grid edge), in the order of offsets."""
-    rows, cols = array.shape
-    padded = np.pad(array, 1, constant_values=False)
-    return [padded[1 - north:1 - north + rows, 1 + east:1 + east + cols]
-            for east, north in offsets]
-
-
-def transition_function(grid, neighbourstates, neighbourcounts,
-                        multipliers, fire):
-    """Apply one step of fire to the grid and return the new grid.
-
-    multipliers: from wind_multipliers(), one per neighbour in the order of
-        neighbourstates.
-    fire: per-cell burn data, updated in place.
-
-    1. Each burning cell may spread, based on its progress through its burn.
-    2. A cell catches fire from each spreading neighbour with probability
-       wind multiplier * ignite probability (capped at 1).
-    3. Cells that finish burning burn out and can no longer ignite.
+    A front rarely arrives exactly on a step boundary. A cell reached part-way
+    through a step really caught fire that many hours before the step ended,
+    so it starts with that much burn time and its neighbours are credited
+    with it (its head_start) on the next step. Without this every cell would
+    round up to a whole number of steps, and slow fronts (which need several
+    steps per cell) would be noticeably slower than their spread rate.
     """
     burning = np.isin(grid, BURNING_STATE_NUMBERS)
+    waiting = ~fire.caught_fire
 
-    # 1. One roll per burning cell
-    fraction_burnt = fire.burn_time / np.maximum(fire.burn_duration, 1e-9)
-    spread_chance = spread_chance_per_hour(fraction_burnt) * HOURS_PER_STEP
-    spreading = burning & (np.random.random(grid.shape) < spread_chance)
+    # 1. Advance the front from each burning neighbour
+    burning_hours = fire.hours_per_step + fire.head_start
+    for front_progress, rate, neighbour_burning, neighbour_hours in zip(
+            fire.front_progress, fire.rates,
+            values_at_neighbours(burning),
+            values_at_neighbours(burning_hours)):
+        front_progress += np.where(neighbour_burning & waiting,
+                                   rate * neighbour_hours, 0.0)
 
-    # 2. An independent roll per spreading neighbour
-    ignited = np.zeros(grid.shape, dtype=bool)
-    for neighbour_spreading, multiplier in zip(
-            values_at_neighbours(spreading), multipliers):
-        catch_chance = np.minimum(1.0, multiplier * fire.ignite_probability)
-        ignited |= neighbour_spreading & (
-            np.random.random(grid.shape) < catch_chance)
-    ignited &= ~burning
+    # 2. A cell ignites when any front has crossed
+    arrived = fire.front_progress >= 1.0 - PROGRESS_TOLERANCE
+    ignited = waiting & arrived.any(axis=0)
+    # How long before the end of the step the first front got there
+    hours_past_arrival = np.divide(
+        fire.front_progress - 1.0, fire.rates,
+        out=np.zeros(fire.rates.shape), where=fire.rates > 0)
+    surplus_hours = np.where(arrived, hours_past_arrival, 0.0).max(axis=0)
+    surplus_hours = np.clip(surplus_hours, 0.0, fire.hours_per_step)
+    fire.caught_fire |= ignited
 
     # 3. Age burning cells and burn out the finished ones
-    fire.burn_time[burning] += HOURS_PER_STEP
+    fire.burn_time[burning] += fire.hours_per_step
+    fire.head_start[burning] = 0.0
     burnt_out = burning & (fire.burn_time >= fire.burn_duration)
-    fire.ignite_probability[burnt_out] = 0.0
 
+    fire.burn_time[ignited] = surplus_hours[ignited]
+    fire.head_start[ignited] = surplus_hours[ignited]
     grid[burnt_out] = fire.burnt_state[burnt_out]
     grid[ignited] = fire.burning_state[ignited]
     return grid
@@ -421,12 +577,9 @@ def main():
     config = setup(sys.argv[1:])
     run = load_run_constants()
 
-    # The wind is fixed for the run, so compute the multipliers once
-    multipliers = wind_multipliers(*wind_components(run.wind_direction),
-                                   run.wind_speed)
-    fire = FireData.from_stage(build_stage(run.ignition_points))
+    fire = FireData.from_stage(build_stage(run.ignition_points), run)
 
-    grid = Grid2D(config, (transition_function, multipliers, fire))
+    grid = Grid2D(config, (transition_function, fire))
     timeline = grid.run()
 
     config.save()

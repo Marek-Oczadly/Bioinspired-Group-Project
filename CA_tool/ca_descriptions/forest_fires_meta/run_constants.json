@@ -2,5 +2,7 @@
   "burn_incinerator": true,
   "burn_power_plant": true,
   "wind_direction": 0.0,
-  "wind_speed": 10.0
+  "wind_speed": 10.0,
+  "spread_randomness": 0.3,
+  "random_seed": null
 }

@@ -1,35 +1,72 @@
 {
   "stage_file": "town.txt",
-  "hours_per_step": 1.0,
-  "peak_spread_chance_per_hour": 0.1,
-  "wind_spread_fraction": 0.1,
+  "cell_size_km": 0.5,
   "wind_focus_per_kmh": 0.05,
-  "neutral_wind_multiplier": 0.5,
   "burnt_darkness": 0.35,
   "terrain": {
     "CHAPARRAL": {
       "colour": [0.75, 0.76, 0.24],
       "burning_colour": [1.0, 0.55, 0.05],
-      "ignite_probability": 0.5,
-      "burn_duration_hours": 48
+      "burn_duration_hours": 168,
+      "fuel": {
+        "heat_released": 11357,
+        "share_reaching_fuel": 0.0322,
+        "heat_to_ignite": 85.6,
+        "wind_constant": 0.00237,
+        "wind_power": 1.42,
+        "packing_term": 1.29,
+        "wind_factor": 0.5,
+        "slope_constant": 0.0,
+        "slope_degrees": 0.0
+      }
     },
     "DENSE_FOREST": {
       "colour": [0.31, 0.38, 0.18],
       "burning_colour": [0.85, 0.28, 0.0],
-      "ignite_probability": 0.3,
-      "burn_duration_hours": 144
+      "burn_duration_hours": 720,
+      "fuel": {
+        "heat_released": 5528,
+        "share_reaching_fuel": 0.0483,
+        "heat_to_ignite": 333.1,
+        "wind_constant": 0.00222,
+        "wind_power": 1.431,
+        "packing_term": 0.723,
+        "wind_factor": 0.1,
+        "slope_constant": 0.0,
+        "slope_degrees": 0.0
+      }
     },
     "SCRUBLAND_CANYON": {
       "colour": [1.0, 1.0, 0.5],
       "burning_colour": [1.0, 0.72, 0.0],
-      "ignite_probability": 0.9,
-      "burn_duration_hours": 24
+      "burn_duration_hours": 7,
+      "fuel": {
+        "heat_released": 3305,
+        "share_reaching_fuel": 0.0531,
+        "heat_to_ignite": 77.2,
+        "wind_constant": 0.00022,
+        "wind_power": 1.83,
+        "packing_term": 0.967,
+        "wind_factor": 0.4,
+        "slope_constant": 24.8,
+        "slope_degrees": 20.0
+      }
     },
     "LAKE": {
       "colour": [0.0, 0.69, 0.94],
       "burning_colour": [1.0, 0.45, 0.35],
-      "ignite_probability": 0.0,
-      "burn_duration_hours": 0
+      "burn_duration_hours": 0,
+      "fuel": {
+        "heat_released": 0,
+        "share_reaching_fuel": 0,
+        "heat_to_ignite": 1,
+        "wind_constant": 0,
+        "wind_power": 1,
+        "packing_term": 0,
+        "wind_factor": 0,
+        "slope_constant": 0,
+        "slope_degrees": 0
+      }
     }
   },
   "special_colours": {
