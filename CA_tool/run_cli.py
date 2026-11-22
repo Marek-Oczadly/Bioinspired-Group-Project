@@ -1,22 +1,25 @@
 """Run CaPyle simulations from the terminal."""
 import argparse
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from itertools import repeat
 import json
 from pathlib import Path
 import sys
 
-# CaPyle import fix
+# CaPyle import fix. ca_descriptions is on the path too, as it is when the GUI
+# runs a description as a script, so forest_fires can import its ca_utils.
 ROOT = Path(__file__).resolve().parent
 for folder in (ROOT, ROOT / 'capyle', ROOT / 'capyle/ca',
-               ROOT / 'capyle/guicomponents'):
+               ROOT / 'capyle/guicomponents', ROOT / 'ca_descriptions'):
     sys.path.append(str(folder))
 
-import numpy as np
 from capyle.ca import CAConfig, Grid2D
 
-# TODO: Import the forest-fire transition function.
-from ca_descriptions.gol_2d import transition_func
+from ca_descriptions.forest_fires import (
+    STATES, FireData,
+    build_stage, load_run_constants, stage_to_grid, transition_function,
+)
 
 
 def positive_int(value):
@@ -58,41 +61,53 @@ def main():
 
     if workers == 1 or runs == 1:
         for run in range(runs):
-            run_simulation(run, runs, generations, grid_size, seed)
+            arrival_hours = run_simulation(run, generations, grid_size, seed)
+            print_result(run + 1, arrival_hours, generations)
     else:
         with ProcessPoolExecutor(max_workers=min(workers, runs)) as pool:
-            for _ in pool.map(run_simulation, range(runs), repeat(runs),
-                              repeat(generations), repeat(grid_size), repeat(seed)):
-                pass
+            arrival_times = pool.map(run_simulation, range(runs), repeat(generations),
+                                     repeat(grid_size), repeat(seed))
+            for run_number, arrival_hours in enumerate(arrival_times, start=1):
+                print_result(run_number, arrival_hours, generations)
 
 
-def run_simulation(run, total, generations, grid_size, seed):
-    # TODO: Load the forest-fire model configuration and states.
-    config = CAConfig(str(ROOT / 'ca_descriptions/gol_2d.py'))
-    config.states = (0, 1, 2)
-    config.grid_dims = tuple(grid_size)
+def print_result(run_number, arrival_hours, generations):
+    if arrival_hours is None:
+        print(f'Run {run_number}: Fire did not reach town within {generations} generations.')
+    else:
+        print(f'Run {run_number}: Fire reached town after {arrival_hours:g} simulated hours.')
+
+
+def run_simulation(run, generations, grid_size, seed):
+    """Return hours to first town ignition, or None if the run reaches its limit."""
+    # The forest-fire model draws its randomness from random_seed, so a
+    # different seed per run gives different runs that repeat exactly
+    run_constants = replace(load_run_constants(), random_seed=seed + run)
+    stage = build_stage(run_constants.ignition_points)
+    initial_grid = stage_to_grid(stage)
+    if tuple(grid_size) != initial_grid.shape:
+        raise ValueError(f'Configured grid_size must match the stage: {initial_grid.shape}')
+
+    config = CAConfig(str(ROOT / 'ca_descriptions/forest_fires.py'))
+    config.states = STATES
+    config.grid_dims = initial_grid.shape
     config.num_generations = generations
+    config.initial_grid = initial_grid
+    config.wrap = False
     config.fill_in_defaults()
 
-    run_seed = seed + run
-    rng = np.random.default_rng(run_seed)
-    # TODO: Initialise the forest-fire map and select the incinerator or power plant.
-    config.initial_grid = rng.choice(config.states, size=config.grid_dims)
-    simulation = Grid2D(config, transition_func)
+    fire = FireData.from_stage(stage, run_constants)
+    if not fire.town_mask.any():
+        raise ValueError('The stage has no town cells')
+    simulation = Grid2D(config, (transition_function, fire))
 
-    # step() advances the simulation without opening a progress window.
-    print(f'Simulation {run + 1}/{total}: {generations} generations, seed {run_seed}')
-    for _ in range(generations):
+    step = 0
+    while step < generations and not fire.town_reached:
         simulation.step()
+        step += 1
 
-    # TODO: Report first town arrival when the forest-fire model is connected.
-    print(f'Finished. Town arrival: {np.count_nonzero(simulation.grid == 1)}')
-
-    # save in new file and overwrite if rerun
-    filename = 'final_grid.npy' if total == 1 else 'final_grid_{}.npy'.format(run + 1)
-    output = ROOT / filename
-    np.save(output, simulation.grid)
-    print('Saved final grid to {}'.format(output))
+    # The hours per step depend on the wind, so they come from the fire data
+    return step * fire.hours_per_step if fire.town_reached else None
 
 
 if __name__ == '__main__':

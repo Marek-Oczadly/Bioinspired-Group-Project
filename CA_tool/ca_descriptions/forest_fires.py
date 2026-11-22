@@ -443,6 +443,9 @@ class FireData:
     burning_state: np.ndarray  # grid state when burning
     burnt_state: np.ndarray  # grid state when burnt out
 
+    town_mask: np.ndarray  # bool, which cells are the town
+    town_reached: bool = False  # True once any town cell has caught fire
+
     @property
     def hours_per_step(self):
         return self.time_step.hours
@@ -464,13 +467,17 @@ class FireData:
         time_step = choose_time_step(rates, stage)
         rates *= spread_noise(rates.shape, run.spread_randomness,
                               run.random_seed)
+        caught_fire = per_cell(
+            lambda cell: cell.burn_state != BurnState.UNBURNT).astype(bool)
+        town_mask = per_cell(
+            lambda cell: cell.special_type == SpecialType.TOWN).astype(bool)
         return cls(
             rates=rates,
             time_step=time_step,
             front_progress=np.zeros(rates.shape),
-            caught_fire=per_cell(
-                lambda cell: cell.burn_state != BurnState.UNBURNT
-            ).astype(bool),
+            caught_fire=caught_fire,
+            town_mask=town_mask,
+            town_reached=bool(np.any(town_mask & caught_fire)),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
             burn_time=np.zeros((len(stage), len(stage[0]))),
             head_start=np.zeros((len(stage), len(stage[0]))),
@@ -570,6 +577,9 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
     fire.head_start[ignited] = surplus_hours[ignited]
     grid[burnt_out] = fire.burnt_state[burnt_out]
     grid[ignited] = fire.burning_state[ignited]
+
+    # 4. Update whether the fire has reached any town cells
+    fire.town_reached = fire.town_reached or bool(np.any(ignited & fire.town_mask))
     return grid
 
 
