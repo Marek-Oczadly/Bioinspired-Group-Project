@@ -21,6 +21,7 @@ import capyle.utils as utils
 from ca_utils import (MOORE_OFFSETS, ft_per_min_to_kmh, kmh_to_ft_per_min,
                       neighbour_distances, values_at_neighbours,
                       wind_components)
+from place_forest import place_forest
 from place_water import place_water
 from dataclasses import dataclass, replace
 from enum import Enum, auto
@@ -313,9 +314,37 @@ def stage_to_grid(stage):
     return np.array([[display_state(cell) for cell in row] for row in stage])
 
 
-def build_stage(ignition_points):
+def random_streams(run):
+    """Independent random seeds for the spread speeds, the water and the
+    forest, all from run.random_seed, so a seeded run repeats exactly and
+    none of the three changes another."""
+    spread, water, forest = np.random.SeedSequence(run.random_seed).spawn(3)
+    return spread, water, forest
+
+
+def plant_forest(stage, rng):
+    """Turn the cells place_forest picks into dense forest.
+
+    place_forest only decides where, so what can't take forest is enforced
+    here: the lake is skipped. A town, incinerator or power plant keeps its
+    special type and just gets forest fuel underneath.
+    """
+    for row, col in place_forest(stage, rng):
+        cell = stage[row][col]
+        if cell.terrain == Terrain.LAKE:
+            continue
+        stage[row][col] = Cell.from_terrain(
+            Terrain.DENSE_FOREST, special_type=cell.special_type)
+
+
+def build_stage(run):
+    """The stage for a run: the default stage with the extra forest planted,
+    then the ignition points lit. The forest is random, so call this once and
+    use the result for everything in the run."""
     stage = load_stage(STAGE_PATH)
-    begin_ignition(stage, ignition_points)
+    forest_rng = np.random.default_rng(random_streams(run)[2])
+    plant_forest(stage, forest_rng)
+    begin_ignition(stage, run.ignition_points)
     return stage
 
 
@@ -561,10 +590,7 @@ class FireData:
         # fastest typical front takes to cross a cell. A front that happens to
         # draw a big multiplier still crosses at most one cell per step.
         time_step = choose_time_step(rates, stage)
-        # Separate random streams for the spread speeds and the water, so
-        # neither changes the other, however the seed is chosen
-        noise_seed, water_seed = np.random.SeedSequence(
-            run.random_seed).spawn(2)
+        noise_seed, water_seed, _ = random_streams(run)
         rates *= spread_noise(rates.shape, run.spread_randomness, noise_seed)
         caught_fire = per_cell(
             lambda cell: cell.burn_state != BurnState.UNBURNT).astype(bool)
@@ -610,7 +636,7 @@ def setup(args):
     # The stage has real edges, so fire must not wrap around
     config.wrap = False
     run = load_run_constants()
-    stage = build_stage(run.ignition_points)
+    stage = build_stage(run)
     initial_grid = stage_to_grid(stage)
     config.grid_dims = initial_grid.shape
     config.initial_grid = initial_grid
@@ -741,7 +767,11 @@ def main():
     config = setup(sys.argv[1:])
     run = load_run_constants()
 
-    fire = FireData.from_stage(build_stage(run.ignition_points), run)
+    # The forest is random, so setup() built a different stage. The stage that
+    # the fire runs on must also be the one that is drawn.
+    stage = build_stage(run)
+    config.initial_grid = stage_to_grid(stage)
+    fire = FireData.from_stage(stage, run)
 
     grid = Grid2D(config, (transition_function, fire))
     timeline = grid.run()

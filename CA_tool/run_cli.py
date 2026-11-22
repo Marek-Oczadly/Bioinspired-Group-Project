@@ -83,7 +83,7 @@ def run_simulation(run, generations, grid_size, seed):
     # The forest-fire model draws its randomness from random_seed, so a
     # different seed per run gives different runs that repeat exactly
     run_constants = replace(load_run_constants(), random_seed=seed + run)
-    stage = build_stage(run_constants.ignition_points)
+    stage = build_stage(run_constants)
     initial_grid = stage_to_grid(stage)
     if tuple(grid_size) != initial_grid.shape:
         raise ValueError(f'Configured grid_size must match the stage: {initial_grid.shape}')
