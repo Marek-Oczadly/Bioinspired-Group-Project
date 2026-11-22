@@ -4,5 +4,7 @@
   "wind_direction": 0.0,
   "wind_speed": 10.0,
   "spread_randomness": 0.3,
-  "random_seed": null
+  "random_seed": null,
+  "time_to_respond_hours": 12,
+  "water_area_km2": 12.5
 }

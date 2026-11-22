@@ -21,6 +21,7 @@ import capyle.utils as utils
 from ca_utils import (MOORE_OFFSETS, ft_per_min_to_kmh, kmh_to_ft_per_min,
                       neighbour_distances, values_at_neighbours,
                       wind_components)
+from place_water import place_water
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Optional, Tuple
@@ -42,11 +43,18 @@ CELL_SIZE_KM = CONFIG["cell_size_km"]
 WIND_FOCUS_PER_KMH = CONFIG["wind_focus_per_kmh"]
 BURNT_DARKNESS = CONFIG["burnt_darkness"]
 BURNING_TOWN_DARKNESS = CONFIG["burning_town_darkness"]
+# How long water keeps a cell wet (and so unable to burn)
+TIME_TO_DRY_HOURS = CONFIG["time_to_dry_hours"]
+WET_COLOUR = tuple(CONFIG["wet_colour"])
+# How much of a wet cell's colour is the wet colour (0 = none, 1 = all)
+WET_BLEND = CONFIG["wet_blend"]
 
 
 FALLBACK_HOURS_PER_STEP = 1.0
 # Float slack so a front that should arrive exactly this step isn't a hair short
 PROGRESS_TOLERANCE = 1e-9
+# The same for times, so a cell due to dry exactly now isn't a step late
+HOURS_TOLERANCE = 1e-9
 
 DIRECTION_NAMES = ("NW", "N", "NE", "W", "E", "SW", "S", "SE")
 
@@ -70,6 +78,11 @@ class SpecialType(Enum):
     POWER_PLANT = auto()
 
 
+class Wetness(Enum):
+    """Marks a display key as the wet version of another one."""
+    WET = auto()
+
+
 @dataclass
 class RunConstants:
     """The settings from run_constants.json that change between runs.
@@ -82,6 +95,10 @@ class RunConstants:
         average speed is unchanged.
     random_seed: a whole number to repeat a run exactly, or null for a
         different run each time.
+    time_to_respond_hours: how long after the start the water arrives. The
+        step length is worked out from the wind, so this is rounded to the
+        nearest whole step.
+    water_area_km2: how much water there is, as the area it covers.
     """
     burn_incinerator: bool
     burn_power_plant: bool
@@ -89,6 +106,8 @@ class RunConstants:
     wind_speed: float
     spread_randomness: float = 0.0
     random_seed: Optional[int] = None
+    time_to_respond_hours: float = 12.0
+    water_area_km2: float = 12.5
 
     @property
     def ignition_points(self):
@@ -233,9 +252,41 @@ DISPLAY_COLOURS.update({(terrain, BurnState.BURNT): colour
 DISPLAY_COLOURS[(SpecialType.TOWN, BurnState.BURNING)] = TOWN_BURNING_COLOUR
 DISPLAY_COLOURS[(SpecialType.TOWN, BurnState.BURNT)] = TOWN_BURNT_COLOUR
 
+
+def with_blue_hue(colour):
+    """The colour with the wet colour blended in."""
+    return tuple((1 - WET_BLEND) * channel + WET_BLEND * wet_channel
+                 for channel, wet_channel in zip(colour, WET_COLOUR))
+
+
+def can_be_wet(key):
+    """Whether a display key has a wet version. Water puts out fire, so a
+    burning cell is never wet, and a lake ignores water."""
+    if isinstance(key, tuple):
+        owner, burn_state = key
+        return burn_state != BurnState.BURNING and owner != Terrain.LAKE
+    return key != Terrain.LAKE
+
+
+# Each wet version is the dry colour with a blue hue. Wet keys are written
+# (Wetness.WET, dry key) and come after every dry key.
+for dry_key in list(DISPLAY_COLOURS):
+    if can_be_wet(dry_key):
+        DISPLAY_COLOURS[(Wetness.WET, dry_key)] = with_blue_hue(
+            DISPLAY_COLOURS[dry_key])
+
 DISPLAY_KEYS = list(DISPLAY_COLOURS)
 STATES = list(range(len(DISPLAY_KEYS)))
 STATE_COLOURS = [DISPLAY_COLOURS[key] for key in DISPLAY_KEYS]
+
+# Lookups from one grid state number to the other (-1 where there is none)
+WET_STATE = np.full(len(DISPLAY_KEYS), -1)
+DRY_STATE = np.full(len(DISPLAY_KEYS), -1)
+for wet_number, wet_key in enumerate(DISPLAY_KEYS):
+    if isinstance(wet_key, tuple) and wet_key[0] is Wetness.WET:
+        dry_number = DISPLAY_KEYS.index(wet_key[1])
+        WET_STATE[dry_number] = wet_number
+        DRY_STATE[wet_number] = dry_number
 
 # Every grid state that means "on fire", which the transition function needs
 BURNING_STATE_NUMBERS = [
@@ -420,8 +471,21 @@ def choose_time_step(rates, stage):
     return TimeStep(1 / fastest_rate, reason)
 
 
+def response_step(run, time_step):
+    """How many steps have passed when the water arrives: the response time
+    rounded to the nearest whole step (the step length depends on the wind)."""
+    return max(0, round(run.time_to_respond_hours / time_step.hours))
+
+
+def water_squares(run):
+    """How many cells the water covers: its area divided by the area of one
+    cell (0.5 km by 0.5 km is 0.25 km^2). place_water is only told this."""
+    return int(math.floor(run.water_area_km2 / CELL_SIZE_KM ** 2 + 1e-9))
+
+
 def describe_run(run, time_step):
-    """Text for the console: the wind, the spread speeds and the time step."""
+    """Text for the console: the wind, the spread speeds, the time step and
+    when the water arrives."""
     lines = ["Wind {:.1f} km/h from {:.0f} degrees".format(
         run.wind_speed, run.wind_direction)]
     for terrain in Terrain:
@@ -440,6 +504,13 @@ def describe_run(run, time_step):
         run.spread_randomness,
         "seed {}".format(run.random_seed) if run.random_seed is not None
         else "different every run"))
+    water_step = response_step(run, time_step)
+    lines.append(
+        "Water: {:.1f} km2 = {} cells, arrives after step {} ({:.1f} h, "
+        "asked for {:g} h), each wet cell dries after {:g} h".format(
+            run.water_area_km2, water_squares(run), water_step,
+            water_step * time_step.hours, run.time_to_respond_hours,
+            TIME_TO_DRY_HOURS))
     return "\n".join(lines)
 
 
@@ -447,7 +518,8 @@ def describe_run(run, time_step):
 class FireData:
     """Per-cell data (arrays shaped like the grid) that the grid's single
     state number can't hold. The transition function updates front_progress,
-    caught_fire, burn_time and head_start."""
+    caught_fire, burn_time, head_start, wet, wet_until, steps_taken and
+    water_placed."""
     rates: np.ndarray  # from directional_rates(), indexed [neighbour, row, col]
     time_step: TimeStep
     front_progress: np.ndarray  # 0-1 per neighbour: how far its front has got
@@ -459,7 +531,16 @@ class FireData:
     burnt_state: np.ndarray  # grid state when burnt out
 
     town_mask: np.ndarray  # bool, which cells are the town
+    lake_mask: np.ndarray  # bool, which cells are lake (water does nothing)
+    wet: np.ndarray  # bool, cells currently wet: they can't catch fire
+    wet_until: np.ndarray  # hour at which each wet cell dries
+    response_step: int  # steps taken when the water arrives
+    water_cells: int  # how many cells the water covers, worked out once
+    water_rng: np.random.Generator  # for place_water, so runs can repeat
+
     town_reached: bool = False  # True once any town cell has caught fire
+    steps_taken: int = 0
+    water_placed: bool = False  # the water arrives once
 
     @property
     def hours_per_step(self):
@@ -480,22 +561,34 @@ class FireData:
         # fastest typical front takes to cross a cell. A front that happens to
         # draw a big multiplier still crosses at most one cell per step.
         time_step = choose_time_step(rates, stage)
-        rates *= spread_noise(rates.shape, run.spread_randomness,
-                              run.random_seed)
+        # Separate random streams for the spread speeds and the water, so
+        # neither changes the other, however the seed is chosen
+        noise_seed, water_seed = np.random.SeedSequence(
+            run.random_seed).spawn(2)
+        rates *= spread_noise(rates.shape, run.spread_randomness, noise_seed)
         caught_fire = per_cell(
             lambda cell: cell.burn_state != BurnState.UNBURNT).astype(bool)
         town_mask = per_cell(
             lambda cell: cell.special_type == SpecialType.TOWN).astype(bool)
+        lake_mask = per_cell(
+            lambda cell: cell.terrain == Terrain.LAKE).astype(bool)
+        grid_shape = (len(stage), len(stage[0]))
         return cls(
             rates=rates,
             time_step=time_step,
             front_progress=np.zeros(rates.shape),
             caught_fire=caught_fire,
             town_mask=town_mask,
+            lake_mask=lake_mask,
+            wet=np.zeros(grid_shape, dtype=bool),
+            wet_until=np.zeros(grid_shape),
+            response_step=response_step(run, time_step),
+            water_cells=water_squares(run),
+            water_rng=np.random.default_rng(water_seed),
             town_reached=bool(np.any(town_mask & caught_fire)),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
-            burn_time=np.zeros((len(stage), len(stage[0]))),
-            head_start=np.zeros((len(stage), len(stage[0]))),
+            burn_time=np.zeros(grid_shape),
+            head_start=np.zeros(grid_shape),
             burning_state=state_when(BurnState.BURNING),
             burnt_state=state_when(BurnState.BURNT),
         )
@@ -538,6 +631,41 @@ def setup(args):
     return config
 
 
+def dry_out(grid, fire, now):
+    """Let wet cells whose time is up go back to how they were."""
+    drying = fire.wet & (fire.wet_until <= now + HOURS_TOLERANCE)
+    grid[drying] = DRY_STATE[grid[drying].astype(int)]
+    fire.wet &= ~drying
+
+
+def drop_water(grid, fire, now):
+    """Ask place_water where to put the water, then wet those cells.
+
+    place_water only decides where, so how much is used is enforced here: if
+    it returns more than fire.water_cells cells, only the first ones are used.
+    Lake cells are ignored. A wet cell can't catch fire for TIME_TO_DRY_HOURS,
+    and a cell that was burning is put out: it stays burnt, since the fuel it
+    burned is gone.
+    """
+    cells = place_water(grid.copy(), fire.water_cells, fire.water_rng)
+    cells = cells[:fire.water_cells]
+    fire.water_placed = True
+
+    hit = np.zeros(grid.shape, dtype=bool)
+    hit[cells[:, 0], cells[:, 1]] = True
+    hit &= ~fire.lake_mask
+
+    extinguished = hit & np.isin(grid, BURNING_STATE_NUMBERS)
+    grid[extinguished] = fire.burnt_state[extinguished]
+    fire.head_start[extinguished] = 0.0
+
+    # Fronts that were heading for these cells start again once they dry
+    fire.front_progress[:, hit] = 0.0
+    fire.wet |= hit
+    fire.wet_until[hit] = now + TIME_TO_DRY_HOURS
+    grid[hit] = WET_STATE[grid[hit].astype(int)]
+
+
 def transition_function(grid, neighbourstates, neighbourcounts, fire):
     """Apply one step of fire to the grid and return the new grid. There is
     no randomness: the same run always burns the same way.
@@ -545,6 +673,8 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
     fire: per-cell burn data and spread rates, updated in place. One step is
         fire.hours_per_step hours.
 
+    0. Wet cells that have dried go back to normal, and once, after
+       fire.response_step steps, the water arrives (see drop_water).
     1. Each burning neighbour is a separate fire front moving into a cell,
        and each front keeps its own progress (the fraction of the gap to the
        cell it has crossed). Progress is kept if the neighbour burns out,
@@ -560,8 +690,15 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
     round up to a whole number of steps, and slow fronts (which need several
     steps per cell) would be noticeably slower than their spread rate.
     """
+    # 0. Water. Cells put out by the water are no longer burning below.
+    now = fire.steps_taken * fire.hours_per_step
+    dry_out(grid, fire, now)
+    if not fire.water_placed and fire.steps_taken >= fire.response_step:
+        drop_water(grid, fire, now)
+
     burning = np.isin(grid, BURNING_STATE_NUMBERS)
-    waiting = ~fire.caught_fire
+    # Wet cells can't catch fire, and fronts don't advance into them
+    waiting = ~fire.caught_fire & ~fire.wet
 
     # 1. Advance the front from each burning neighbour
     burning_hours = fire.hours_per_step + fire.head_start
@@ -595,6 +732,8 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
 
     # 4. Update whether the fire has reached any town cells
     fire.town_reached = fire.town_reached or bool(np.any(ignited & fire.town_mask))
+
+    fire.steps_taken += 1
     return grid
 
 
