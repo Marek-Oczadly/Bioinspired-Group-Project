@@ -41,6 +41,7 @@ STAGE_PATH = os.path.join(META_DIR, CONFIG["stage_file"])
 CELL_SIZE_KM = CONFIG["cell_size_km"]
 WIND_FOCUS_PER_KMH = CONFIG["wind_focus_per_kmh"]
 BURNT_DARKNESS = CONFIG["burnt_darkness"]
+BURNING_TOWN_DARKNESS = CONFIG["burning_town_darkness"]
 
 
 FALLBACK_HOURS_PER_STEP = 1.0
@@ -120,12 +121,19 @@ BURNING_COLOURS = {terrain: tuple(colour) for terrain, colour
                    in terrain_setting("burning_colour").items()}
 
 
-def blacken(colour):
-    return tuple(channel * BURNT_DARKNESS for channel in colour)
+def blacken(colour, darkness=BURNT_DARKNESS):
+    """The colour scaled towards black (darkness is the brightness kept)."""
+    return tuple(channel * darkness for channel in colour)
 
 
 BURNT_COLOURS = {terrain: blacken(colour)
                  for terrain, colour in TERRAIN_COLOURS.items()}
+
+# The town stays recognisable once on fire, as a darkened grey, instead of
+# showing the chaparral underneath it. Burning is less dark than burnt out.
+TOWN_BURNING_COLOUR = blacken(SPECIAL_COLOURS[SpecialType.TOWN],
+                              BURNING_TOWN_DARKNESS)
+TOWN_BURNT_COLOUR = blacken(SPECIAL_COLOURS[SpecialType.TOWN])
 
 # Hours a cell burns before burning out
 BURN_DURATION_HOURS = terrain_setting("burn_duration_hours")
@@ -214,7 +222,7 @@ def begin_ignition(stage, ignition_points):
 
 
 # One key per distinct look: Terrain or SpecialType (unburnt),
-# (Terrain, BURNING) or (Terrain, BURNT)
+# (Terrain, BURNING) or (Terrain, BURNT), and the same two for the town
 DISPLAY_COLOURS = {}
 DISPLAY_COLOURS.update(TERRAIN_COLOURS)
 DISPLAY_COLOURS.update(SPECIAL_COLOURS)
@@ -222,20 +230,27 @@ DISPLAY_COLOURS.update({(terrain, BurnState.BURNING): colour
                         for terrain, colour in BURNING_COLOURS.items()})
 DISPLAY_COLOURS.update({(terrain, BurnState.BURNT): colour
                         for terrain, colour in BURNT_COLOURS.items()})
+DISPLAY_COLOURS[(SpecialType.TOWN, BurnState.BURNING)] = TOWN_BURNING_COLOUR
+DISPLAY_COLOURS[(SpecialType.TOWN, BurnState.BURNT)] = TOWN_BURNT_COLOUR
 
 DISPLAY_KEYS = list(DISPLAY_COLOURS)
 STATES = list(range(len(DISPLAY_KEYS)))
 STATE_COLOURS = [DISPLAY_COLOURS[key] for key in DISPLAY_KEYS]
 
-BURNING_STATE_NUMBERS = [DISPLAY_KEYS.index((terrain, BurnState.BURNING))
-                         for terrain in Terrain]
+# Every grid state that means "on fire", which the transition function needs
+BURNING_STATE_NUMBERS = [
+    DISPLAY_KEYS.index((owner, BurnState.BURNING))
+    for owner in [*Terrain, SpecialType.TOWN]]
 
 
 def display_state(cell):
     """The numeric grid state of a cell. An unburnt special type hides its
-    terrain."""
+    terrain, and a burning or burnt town keeps its own look; other cells show
+    their terrain burning or burnt."""
     if cell.burn_state != BurnState.UNBURNT:
-        key = (cell.terrain, cell.burn_state)
+        owner = (SpecialType.TOWN if cell.special_type == SpecialType.TOWN
+                 else cell.terrain)
+        key = (owner, cell.burn_state)
     elif cell.special_type is not None:
         key = cell.special_type
     else:

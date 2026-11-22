@@ -3,6 +3,7 @@
   "cell_size_km": 0.5,
   "wind_focus_per_kmh": 0.05,
   "burnt_darkness": 0.35,
+  "burning_town_darkness": 0.6,
   "terrain": {
     "CHAPARRAL": {
       "colour": [0.75, 0.76, 0.24],
