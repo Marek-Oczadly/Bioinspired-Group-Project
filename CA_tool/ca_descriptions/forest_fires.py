@@ -329,7 +329,11 @@ def random_streams(run):
 
 
 def manual_coordinates(coordinates, rows, cols, setting):
-    """Validate zero-based [row, column] pairs from the run config."""
+    """Return zero-based (row, column) tuples from a placement setting.
+
+    Treat None as an empty list. Raise ValueError for malformed pairs,
+    duplicate coordinates, or coordinates outside the map.
+    """
     if coordinates is None:
         return []
     if not isinstance(coordinates, (list, tuple)):
@@ -353,11 +357,12 @@ def manual_coordinates(coordinates, rows, cols, setting):
 
 
 def plant_forest(stage, rng, coordinates="random"):
-    """Turn the cells place_forest picks into dense forest.
+    """Convert selected stage cells to dense forest in place.
 
-    place_forest only decides where, so what can't take forest is enforced
-    here: the lake is skipped. A town, incinerator or power plant keeps its
-    special type and just gets forest fuel underneath.
+    Pass "random" or None for seeded random placement, or a coordinate list
+    to place forest only at those cells. An empty list adds no forest.
+    Skip lakes during random placement and reject manual lake coordinates.
+    Preserve the special type of any town or ignition cell converted.
     """
     # Explicit coordinates replace the random additions, including an empty list.
     random_placement = coordinates is None or coordinates == "random"
@@ -377,9 +382,11 @@ def plant_forest(stage, rng, coordinates="random"):
 
 
 def build_stage(run):
-    """The stage for a run: the default stage with the extra forest planted,
-    then the ignition points lit. The forest is random, so call this once and
-    use the result for everything in the run."""
+    """Build the base map, apply the configured forest placement, and ignite it.
+
+    Use the returned stage for both simulation and display so they share the
+    same terrain, including any randomly placed forest.
+    """
     stage = load_stage(STAGE_PATH)
     forest_rng = np.random.default_rng(random_streams(run)[2])
     plant_forest(stage, forest_rng, run.forest_coordinates)
@@ -547,7 +554,7 @@ def response_step(run, time_step):
 
 def water_squares(run):
     """How many cells the water covers: its area divided by the area of one
-    cell (0.5 km by 0.5 km is 0.25 km^2). place_water is only told this."""
+    cell (0.5 km by 0.5 km is 0.25 km^2), rounded down to whole cells."""
     return int(math.floor(run.water_area_km2 / CELL_SIZE_KM ** 2 + 1e-9))
 
 
@@ -617,6 +624,11 @@ class FireData:
 
     @classmethod
     def from_stage(cls, stage, run):
+        """Build the run's per-cell arrays and validate manual water placement.
+
+        Raise ValueError for invalid coordinates, lake cells, or a water
+        budget that cannot cover the requested placement.
+        """
         def per_cell(get_value):
             return np.array([[get_value(cell) for cell in row]
                              for row in stage], dtype=float)
@@ -724,7 +736,13 @@ def dry_out(grid, fire, now):
 
 
 def drop_water(grid, fire, now):
-    """Wet the manual cells and randomly fill the remaining water budget."""
+    """Apply one drop at simulated hour now and print the placement counts.
+
+    Water the manual cells first and use the remaining budget on distinct
+    land cells sampled with the run's water RNG. Extinguish fire in those
+    cells and prevent new ignition until they dry. A zero budget skips the
+    drop and marks it handled.
+    """
     # Reserve the manual cells first. The combined mask is applied below.
     hit = fire.manual_water_mask.copy()
     manual_count = int(np.count_nonzero(hit))

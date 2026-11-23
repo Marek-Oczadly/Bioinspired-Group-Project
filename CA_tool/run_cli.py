@@ -31,6 +31,10 @@ def positive_int(value):
 
 
 def main():
+    """Load and validate the batch settings with any command-line overrides.
+
+    Run the simulations sequentially or in parallel and print each result.
+    """
     # command line parsing
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, default=ROOT / 'simulation_config.json',
@@ -80,7 +84,12 @@ def print_result(run_number, arrival_hours, generations):
 
 
 def run_simulation(run, generations, grid_size, seed):
-    """Return hours to first town ignition, or None if the fire goes out or hits the limit."""
+    """Load the configured forest-fire scenario and run it with seed + run.
+
+    The map must match grid_size. Stop at first town ignition, when all
+    fires go out, or after generations steps. Return the simulated hours
+    to town ignition, or None if the fire never reaches town.
+    """
     # The forest-fire model draws its randomness from random_seed, so a
     # different seed per run gives different runs that repeat exactly
     run_constants = replace(load_run_constants(), random_seed=seed + run)
