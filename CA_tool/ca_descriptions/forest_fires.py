@@ -25,7 +25,7 @@ from place_forest import place_forest
 from place_water import place_water
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 
 META_DIR = os.path.join(
@@ -100,6 +100,10 @@ class RunConstants:
         step length is worked out from the wind, so this is rounded to the
         nearest whole step.
     water_area_km2: how much water there is, as the area it covers.
+    forest_coordinates: zero-based [row, column] pairs to convert to forest.
+        "random" (or legacy null) uses random placement; [] adds no forest.
+    water_coordinates: zero-based [row, column] pairs to water first.
+        The rest of the budget is used on randomly selected land cells.
     """
     burn_incinerator: bool
     burn_power_plant: bool
@@ -109,6 +113,8 @@ class RunConstants:
     random_seed: Optional[int] = None
     time_to_respond_hours: float = 12.0
     water_area_km2: float = 12.5
+    forest_coordinates: Optional[Union[list, str]] = "random"
+    water_coordinates: Optional[list] = None
 
     @property
     def ignition_points(self):
@@ -322,16 +328,49 @@ def random_streams(run):
     return spread, water, forest
 
 
-def plant_forest(stage, rng):
+def manual_coordinates(coordinates, rows, cols, setting):
+    """Validate zero-based [row, column] pairs from the run config."""
+    if coordinates is None:
+        return []
+    if not isinstance(coordinates, (list, tuple)):
+        raise ValueError(f'{setting} must be a list of [row, column] pairs')
+
+    cells = []
+    seen = set()
+    for pair in coordinates:
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or any(type(value) is not int for value in pair)):
+            raise ValueError(f'{setting}: expected an integer [row, column], got {pair!r}')
+        row, col = pair
+        if not (0 <= row < rows and 0 <= col < cols):
+            raise ValueError(f'{setting}: cell {pair} is outside the {rows} × {cols} map')
+        # Catch duplicates before they could count twice against the budget.
+        if (row, col) in seen:
+            raise ValueError(f'{setting}: duplicate cell {pair}')
+        seen.add((row, col))
+        cells.append((row, col))
+    return cells
+
+
+def plant_forest(stage, rng, coordinates="random"):
     """Turn the cells place_forest picks into dense forest.
 
     place_forest only decides where, so what can't take forest is enforced
     here: the lake is skipped. A town, incinerator or power plant keeps its
     special type and just gets forest fuel underneath.
     """
-    for row, col in place_forest(stage, rng):
+    # Explicit coordinates replace the random additions, including an empty list.
+    random_placement = coordinates is None or coordinates == "random"
+    if random_placement:
+        cells = place_forest(stage, rng)
+    else:
+        cells = manual_coordinates(coordinates, len(stage), len(stage[0]),
+                                   'forest_coordinates')
+    for row, col in cells:
         cell = stage[row][col]
         if cell.terrain == Terrain.LAKE:
+            if not random_placement:
+                raise ValueError(f'forest_coordinates: [{row}, {col}] is a lake cell')
             continue
         stage[row][col] = Cell.from_terrain(
             Terrain.DENSE_FOREST, special_type=cell.special_type)
@@ -343,7 +382,7 @@ def build_stage(run):
     use the result for everything in the run."""
     stage = load_stage(STAGE_PATH)
     forest_rng = np.random.default_rng(random_streams(run)[2])
-    plant_forest(stage, forest_rng)
+    plant_forest(stage, forest_rng, run.forest_coordinates)
     begin_ignition(stage, run.ignition_points)
     return stage
 
@@ -565,6 +604,7 @@ class FireData:
     wet_until: np.ndarray  # hour at which each wet cell dries
     response_step: int  # steps taken when the water arrives
     water_cells: int  # how many cells the water covers, worked out once
+    manual_water_mask: np.ndarray
     water_rng: np.random.Generator  # for place_water, so runs can repeat
 
     town_reached: bool = False  # True once any town cell has caught fire
@@ -599,6 +639,24 @@ class FireData:
         lake_mask = per_cell(
             lambda cell: cell.terrain == Terrain.LAKE).astype(bool)
         grid_shape = (len(stage), len(stage[0]))
+
+        # Convert the area to whole cells and validate the drop before the run.
+        water_cells = water_squares(run)
+        manual_water = manual_coordinates(run.water_coordinates, *grid_shape,
+                                          'water_coordinates')
+        if water_cells < 0:
+            raise ValueError('water_area_km2 must be non-negative')
+        if len(manual_water) > water_cells:
+            raise ValueError(f'Water budget exceeded: {len(manual_water)} manual cells '
+                             f'requested, but only {water_cells} are available')
+        if water_cells > np.count_nonzero(~lake_mask):
+            raise ValueError('Water budget exceeds the number of land cells')
+        # Keep the manual footprint separate so the random draw can skip it.
+        manual_water_mask = np.zeros(grid_shape, dtype=bool)
+        for row, col in manual_water:
+            if lake_mask[row, col]:
+                raise ValueError(f'water_coordinates: [{row}, {col}] is a lake cell')
+            manual_water_mask[row, col] = True
         return cls(
             rates=rates,
             time_step=time_step,
@@ -609,7 +667,8 @@ class FireData:
             wet=np.zeros(grid_shape, dtype=bool),
             wet_until=np.zeros(grid_shape),
             response_step=response_step(run, time_step),
-            water_cells=water_squares(run),
+            water_cells=water_cells,
+            manual_water_mask=manual_water_mask,
             water_rng=np.random.default_rng(water_seed),
             town_reached=bool(np.any(town_mask & caught_fire)),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
@@ -665,21 +724,21 @@ def dry_out(grid, fire, now):
 
 
 def drop_water(grid, fire, now):
-    """Ask place_water where to put the water, then wet those cells.
-
-    place_water only decides where, so how much is used is enforced here: if
-    it returns more than fire.water_cells cells, only the first ones are used.
-    Lake cells are ignored. A wet cell can't catch fire for TIME_TO_DRY_HOURS,
-    and a cell that was burning is put out: it stays burnt, since the fuel it
-    burned is gone.
-    """
-    cells = place_water(grid.copy(), fire.water_cells, fire.water_rng)
-    cells = cells[:fire.water_cells]
+    """Wet the manual cells and randomly fill the remaining water budget."""
+    # Reserve the manual cells first. The combined mask is applied below.
+    hit = fire.manual_water_mask.copy()
+    manual_count = int(np.count_nonzero(hit))
+    remaining = fire.water_cells - manual_count
     fire.water_placed = True
+    if not fire.water_cells:
+        return
 
-    hit = np.zeros(grid.shape, dtype=bool)
-    hit[cells[:, 0], cells[:, 1]] = True
-    hit &= ~fire.lake_mask
+    # Spend the remaining budget on distinct land cells outside that footprint.
+    random_cells = place_water(grid, remaining, fire.water_rng,
+                               eligible=~(fire.lake_mask | hit))
+    hit[random_cells[:, 0], random_cells[:, 1]] = True
+    print(f'Water drop at {now:g} simulated hours: {manual_count} manual '
+          f'cells, {len(random_cells)} randomly placed cells.', flush=True)
 
     extinguished = hit & np.isin(grid, BURNING_STATE_NUMBERS)
     grid[extinguished] = fire.burnt_state[extinguished]

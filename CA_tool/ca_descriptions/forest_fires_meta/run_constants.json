@@ -6,5 +6,7 @@
   "spread_randomness": 0.3,
   "random_seed": null,
   "time_to_respond_hours": 12,
-  "water_area_km2": 12.5
+  "water_area_km2": 12.5,
+  "forest_coordinates": "random",
+  "water_coordinates": []
 }

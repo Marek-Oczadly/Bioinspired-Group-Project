@@ -106,6 +106,7 @@ def run_simulation(run, generations, grid_size, seed):
     while step < generations and not fire.town_reached:
 
         # Stop if there are no burning cells left.
+        # An extinguished fire has no burning cells left to spread.
         if not np.isin(simulation.grid, BURNING_STATE_NUMBERS).any():
             break
 

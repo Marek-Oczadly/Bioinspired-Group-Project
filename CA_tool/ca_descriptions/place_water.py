@@ -9,27 +9,23 @@ smarter strategy can replace the random one without touching the fire model.
 import numpy as np
 
 
-def place_water(board, num_squares, rng=None):
+def place_water(board, num_squares, rng=None, *, eligible=None):
     """Choose the cells to put water on.
 
-    board: the board state, a 2D array with one number per cell (the grid
-        from the CA). It must not be modified. The random strategy ignores
-        it, but a smarter one will want to see where the fire is.
-    num_squares: how many cells to choose. How much water there is, and so
-        how many cells it covers, is the caller's job; this only decides where
-        they are. (If the board has fewer cells than this, every cell is
-        returned, since a cell can't be chosen twice.)
-    rng: a numpy Generator, so a run can be repeated exactly; omit for a
-        different choice every time.
+    board: current grid. Used for its shape.
+    num_squares: maximum number of cells to select.
+    rng: optional NumPy generator for reproducible placement.
+    eligible: optional Boolean mask of the cells available to select.
 
-    Returns an integer array of shape (number of cells, 2) of (row, col)
-    co-ordinates, with no cell repeated. Some may be cells that can't take
-    water (a lake); the caller ignores those.
+    Returns a (number of cells, 2) array of unique [row, column] pairs.
     """
     rows, cols = board.shape
-    count = min(num_squares, rows * cols)
+    # Flatten the eligible cells for sampling, then convert back to row/column.
+    candidates = (np.arange(rows * cols) if eligible is None
+                  else np.flatnonzero(eligible))
+    count = min(num_squares, len(candidates))
     rng = np.random.default_rng() if rng is None else rng
 
     # Choosing flat positions without replacement guarantees unique cells
-    flat_positions = rng.choice(rows * cols, size=count, replace=False)
+    flat_positions = rng.choice(candidates, size=count, replace=False)
     return np.column_stack(np.unravel_index(flat_positions, board.shape))
