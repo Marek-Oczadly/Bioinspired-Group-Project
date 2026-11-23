@@ -14,10 +14,11 @@ for folder in (ROOT, ROOT / 'capyle', ROOT / 'capyle/ca',
                ROOT / 'capyle/guicomponents', ROOT / 'ca_descriptions'):
     sys.path.append(str(folder))
 
+import numpy as np
 from capyle.ca import CAConfig, Grid2D
 
 from ca_descriptions.forest_fires import (
-    STATES, FireData,
+    BURNING_STATE_NUMBERS, STATES, FireData,
     build_stage, load_run_constants, stage_to_grid, transition_function,
 )
 
@@ -79,7 +80,7 @@ def print_result(run_number, arrival_hours, generations):
 
 
 def run_simulation(run, generations, grid_size, seed):
-    """Return hours to first town ignition, or None if the run reaches its limit."""
+    """Return hours to first town ignition, or None if the fire goes out or hits the limit."""
     # The forest-fire model draws its randomness from random_seed, so a
     # different seed per run gives different runs that repeat exactly
     run_constants = replace(load_run_constants(), random_seed=seed + run)
@@ -103,6 +104,11 @@ def run_simulation(run, generations, grid_size, seed):
 
     step = 0
     while step < generations and not fire.town_reached:
+
+        # Stop if there are no burning cells left.
+        if not np.isin(simulation.grid, BURNING_STATE_NUMBERS).any():
+            break
+
         simulation.step()
         step += 1
 
