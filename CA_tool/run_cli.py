@@ -62,25 +62,31 @@ def main():
 
     if workers == 1 or runs == 1:
         for run in range(runs):
-            arrival_hours = run_simulation(run, generations, grid_size, seed)
-            print_result(run + 1, arrival_hours, generations)
+            arrival_hours, elapsed_hours = _simulate(run, generations, grid_size, seed)
+            print_result(run + 1, arrival_hours, elapsed_hours)
     else:
         with ProcessPoolExecutor(max_workers=min(workers, runs)) as pool:
-            arrival_times = pool.map(run_simulation, range(runs), repeat(generations),
-                                     repeat(grid_size), repeat(seed))
-            for run_number, arrival_hours in enumerate(arrival_times, start=1):
-                print_result(run_number, arrival_hours, generations)
+            results = pool.map(_simulate, range(runs), repeat(generations),
+                               repeat(grid_size), repeat(seed))
+            for run_number, (arrival_hours, elapsed_hours) in enumerate(results, start=1):
+                print_result(run_number, arrival_hours, elapsed_hours)
 
 
-def print_result(run_number, arrival_hours, generations):
+def print_result(run_number, arrival_hours, elapsed_hours):
     if arrival_hours is None:
-        print(f'Run {run_number}: Fire did not reach town within {generations} generations.')
+        print(f'Run {run_number}: Fire did not reach town. Run ended after {elapsed_hours:g} simulated hours.')
     else:
         print(f'Run {run_number}: Fire reached town after {arrival_hours:g} simulated hours.')
 
 
 def run_simulation(run, generations, grid_size, seed):
-    """Return hours to first town ignition, or None if the fire goes out or hits the limit."""
+    """Return simulated hours to first town ignition, or None if unreached."""
+    arrival_hours, _ = _simulate(run, generations, grid_size, seed)
+    return arrival_hours
+
+
+def _simulate(run, generations, grid_size, seed):
+    """Return the town arrival time and the elapsed run time in simulated hours."""
     # The forest-fire model draws its randomness from random_seed, so a
     # different seed per run gives different runs that repeat exactly
     run_constants = replace(load_run_constants(), random_seed=seed + run)
@@ -112,8 +118,14 @@ def run_simulation(run, generations, grid_size, seed):
         simulation.step()
         step += 1
 
-    # The hours per step depend on the wind, so they come from the fire data
-    return step * fire.hours_per_step if fire.town_reached else None
+    elapsed_hours = step * fire.hours_per_step
+    if not fire.town_reached:
+        return None, elapsed_hours
+
+    # Town cells may ignite partway through the final step. The town cell
+    # that has burned the longest marks the first arrival.
+    time_since_arrival = float(fire.burn_time[fire.town_mask].max())
+    return max(0.0, elapsed_hours - time_since_arrival), elapsed_hours
 
 
 if __name__ == '__main__':
