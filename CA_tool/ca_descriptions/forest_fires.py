@@ -699,8 +699,8 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
     fire: per-cell burn data and spread rates, updated in place. One step is
         fire.hours_per_step hours.
 
-    0. Wet cells that have dried go back to normal, and once, after
-       fire.response_step steps, the water arrives (see drop_water).
+    0. Water arrives once at fire.response_step. If a cell dries during
+       this step, fire can advance into it for the remaining dry hours.
     1. Each burning neighbour is a separate fire front moving into a cell,
        and each front keeps its own progress (the fraction of the gap to the
        cell it has crossed). Progress is kept if the neighbour burns out,
@@ -723,17 +723,24 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
         drop_water(grid, fire, now)
 
     burning = np.isin(grid, BURNING_STATE_NUMBERS)
-    # Wet cells can't catch fire, and fronts don't advance into them
-    waiting = ~fire.caught_fire & ~fire.wet
+    waiting = ~fire.caught_fire
 
-    # 1. Advance the front from each burning neighbour
+    # If a cell dries during this step, fronts can advance only during
+    # the remaining dry hours. Wet cells also block any earlier head start.
+    end = now + fire.hours_per_step
+    dry_hours = np.maximum(0.0, end - fire.wet_until)
     burning_hours = fire.hours_per_step + fire.head_start
     for front_progress, rate, neighbour_burning, neighbour_hours in zip(
             fire.front_progress, fire.rates,
             values_at_neighbours(burning),
             values_at_neighbours(burning_hours)):
+        spread_hours = np.minimum(dry_hours, neighbour_hours)
         front_progress += np.where(neighbour_burning & waiting,
-                                   rate * neighbour_hours, 0.0)
+                                   rate * spread_hours, 0.0)
+
+    # Restore dry display states before applying any new ignitions.
+    dry_out(grid, fire, end)
+    waiting &= ~fire.wet
 
     # 2. A cell ignites when any front has crossed
     arrived = fire.front_progress >= 1.0 - PROGRESS_TOLERANCE

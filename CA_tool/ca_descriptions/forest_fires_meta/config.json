@@ -4,7 +4,7 @@
   "wind_focus_per_kmh": 0.05,
   "burnt_darkness": 0.35,
   "burning_town_darkness": 0.6,
-  "time_to_dry_hours": 24,
+  "time_to_dry_hours": 2,
   "wet_colour": [0.1, 0.3, 1.0],
   "wet_blend": 0.5,
   "terrain": {
