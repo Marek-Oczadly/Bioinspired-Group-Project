@@ -9,7 +9,8 @@ spread fire), so if every burning cell is covered the fire is stopped for good.
 The water goes on the burning cells nearest the town first, so that if there
 are more fires than water, the ones left burning are the furthest from the
 town. Any water left over wets the unburnt cells around the fire, again
-nearest the town first, as a firebreak.
+nearest the town first, as a firebreak. Water the fire doesn't need is not
+dropped at all.
 """
 
 import numpy as np
@@ -45,21 +46,21 @@ def place_water(board, num_squares, rng=None, burning=None, town=None):
 
     board: the board state, a 2D array with one number per cell (the grid
         from the CA). It must not be modified.
-    num_squares: how many cells to choose. How much water there is, and so
+    num_squares: the most cells to choose. How much water there is, and so
         how many cells it covers, is the caller's job; this only decides where
-        they are. (If the board has fewer cells than this, every cell is
-        returned, since a cell can't be chosen twice.)
+        they are. Fewer cells are returned if less water is needed (it does
+        not have to use the full budget).
     rng: a numpy Generator, so a run can be repeated exactly; omit for a
-        different choice every time. Used only to fill in random cells if
-        there is nothing to aim at (no fire).
+        different choice every time. Used only when `burning` isn't given.
     burning: boolean mask the shape of the board, True where a cell is on
-        fire. Without it the water is placed at random.
+        fire. Without it nothing is known about the fire, so the water is
+        placed at random (and does use the full budget).
     town: boolean mask the shape of the board, True where the town is. Used
         to put the water nearest the town first. Without it, the centre of
         the board is used.
 
     Returns an integer array of shape (number of cells, 2) of (row, col)
-    co-ordinates, with no cell repeated. Some may be cells that can't take
+    co-ordinates, with no cell repeated. It is empty if there is no fire. Some may be cells that can't take
     water (a lake); the caller ignores those.
     """
     rows, cols = board.shape
@@ -82,15 +83,6 @@ def place_water(board, num_squares, rng=None, burning=None, town=None):
     on_fire = cells_nearest(np.argwhere(burning), town_centre)
     around_fire = cells_nearest(
         np.argwhere(unburnt_cells_around(burning, board.shape)), town_centre)
-    chosen = np.concatenate([on_fire, around_fire])[:count]
-
-    if len(chosen) < count:
-        # Water is left and there is no fire to use it on: fill up with
-        # random cells so the answer is always `count` unique cells
-        taken = np.zeros(board.shape, dtype=bool)
-        taken[chosen[:, 0], chosen[:, 1]] = True
-        free = np.flatnonzero(~taken)
-        extra = rng.choice(free, size=count - len(chosen), replace=False)
-        chosen = np.concatenate(
-            [chosen, np.column_stack(np.unravel_index(extra, board.shape))])
-    return chosen
+    # The water doesn't have to be used up: if the fire and the cells around
+    # it need less than `count`, the rest is simply not dropped
+    return np.concatenate([on_fire, around_fire])[:count]
