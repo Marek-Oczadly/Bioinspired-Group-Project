@@ -673,7 +673,10 @@ def drop_water(grid, fire, now):
     and a cell that was burning is put out: it stays burnt, since the fuel it
     burned is gone.
     """
-    cells = place_water(grid.copy(), fire.water_cells, fire.water_rng)
+    # place_water is told where the fire and the town are, so it can aim
+    cells = place_water(grid.copy(), fire.water_cells, fire.water_rng,
+                        burning=np.isin(grid, BURNING_STATE_NUMBERS),
+                        town=fire.town_mask)
     cells = cells[:fire.water_cells]
     fire.water_placed = True
 

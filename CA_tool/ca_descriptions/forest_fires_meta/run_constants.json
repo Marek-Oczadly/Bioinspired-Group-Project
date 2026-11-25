@@ -1,10 +1,10 @@
 {
   "burn_incinerator": true,
-  "burn_power_plant": true,
+  "burn_power_plant": false,
   "wind_direction": 0.0,
-  "wind_speed": 10.0,
+  "wind_speed": 30.0,
   "spread_randomness": 0.3,
   "random_seed": null,
-  "time_to_respond_hours": 12,
+  "time_to_respond_hours": 24,
   "water_area_km2": 12.5
 }
