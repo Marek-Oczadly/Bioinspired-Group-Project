@@ -7,5 +7,5 @@
   "random_seed": null,
   "time_to_respond_hours": 24,
   "water_area_km2": 12.5,
-  "guard_enabled": false
+  "guard_enabled": true
 }
