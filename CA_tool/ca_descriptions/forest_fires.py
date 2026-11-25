@@ -100,6 +100,10 @@ class RunConstants:
         step length is worked out from the wind, so this is rounded to the
         nearest whole step.
     water_area_km2: how much water there is, as the area it covers.
+    guard_enabled: whether the guard strategies are used. When true,
+        place_forest plants extra forest before the run and place_water
+        drops the water; when false the fire runs on the default stage with
+        no water at all.
     """
     burn_incinerator: bool
     burn_power_plant: bool
@@ -109,6 +113,7 @@ class RunConstants:
     random_seed: Optional[int] = None
     time_to_respond_hours: float = 12.0
     water_area_km2: float = 12.5
+    guard_enabled: bool = True
 
     @property
     def ignition_points(self):
@@ -340,10 +345,12 @@ def plant_forest(stage, rng):
 def build_stage(run):
     """The stage for a run: the default stage with the extra forest planted,
     then the ignition points lit. The forest is random, so call this once and
-    use the result for everything in the run."""
+    use the result for everything in the run. With the guard disabled no
+    extra forest is planted."""
     stage = load_stage(STAGE_PATH)
-    forest_rng = np.random.default_rng(random_streams(run)[2])
-    plant_forest(stage, forest_rng)
+    if run.guard_enabled:
+        forest_rng = np.random.default_rng(random_streams(run)[2])
+        plant_forest(stage, forest_rng)
     begin_ignition(stage, run.ignition_points)
     return stage
 
@@ -533,6 +540,9 @@ def describe_run(run, time_step):
         run.spread_randomness,
         "seed {}".format(run.random_seed) if run.random_seed is not None
         else "different every run"))
+    if not run.guard_enabled:
+        lines.append("Guard disabled: no extra forest and no water")
+        return "\n".join(lines)
     water_step = response_step(run, time_step)
     lines.append(
         "Water: {:.1f} km2 = {} cells, arrives after step {} ({:.1f} h, "
@@ -566,6 +576,7 @@ class FireData:
     response_step: int  # steps taken when the water arrives
     water_cells: int  # how many cells the water covers, worked out once
     water_rng: np.random.Generator  # for place_water, so runs can repeat
+    guard_enabled: bool  # False: place_water is never called
 
     town_reached: bool = False  # True once any town cell has caught fire
     steps_taken: int = 0
@@ -611,6 +622,7 @@ class FireData:
             response_step=response_step(run, time_step),
             water_cells=water_squares(run),
             water_rng=np.random.default_rng(water_seed),
+            guard_enabled=run.guard_enabled,
             town_reached=bool(np.any(town_mask & caught_fire)),
             burn_duration=per_cell(lambda cell: cell.max_burn_duration),
             burn_time=np.zeros(grid_shape),
@@ -722,7 +734,8 @@ def transition_function(grid, neighbourstates, neighbourcounts, fire):
     # 0. Water. Cells put out by the water are no longer burning below.
     now = fire.steps_taken * fire.hours_per_step
     dry_out(grid, fire, now)
-    if not fire.water_placed and fire.steps_taken >= fire.response_step:
+    if (fire.guard_enabled and not fire.water_placed
+            and fire.steps_taken >= fire.response_step):
         drop_water(grid, fire, now)
 
     burning = np.isin(grid, BURNING_STATE_NUMBERS)
