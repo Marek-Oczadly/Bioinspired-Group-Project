@@ -1,17 +1,6 @@
-"""Decides where extra forest goes before the simulation begins.
-
-forest_fires.py calls place_forest() once, on the default stage, and does
-everything with the answer (including skipping cells that can't take forest,
-such as the lake). This file only chooses the cells.
-
-Dense forest spreads fire very slowly, so the forest goes in two places:
-
-1. A square block on every ignition source. It keeps the fire small and slow
-   while the water is on its way, so the water can put all of it out. The
-   stage is passed in before anything is lit, so we can't know which source
-   will burn, and every source gets a block.
-2. The town itself and a margin around it, as a second line of defence if some
-   fire does get through.
+"""
+Decides where extra forest goes before the simulation begins. Edit the place_forest() function to change the strat
+Atm it places a square radius 10 around hte power plant and incinerator and 3 around the town
 """
 
 import numpy as np
@@ -30,7 +19,7 @@ TOWN_TYPE = "TOWN"
 
 
 def find_cells_of_type(stage, type_names):
-    """(row, col) of every cell whose special type is named in type_names."""
+    # (row, col) of every cell whose special type is named in type_names.
     return [(row, col)
             for row, cells in enumerate(stage)
             for col, cell in enumerate(cells)
@@ -39,28 +28,16 @@ def find_cells_of_type(stage, type_names):
 
 
 def mark_block(chosen, centre, radius):
-    """Mark the square of cells within `radius` of centre (clipped to the
-    board)."""
+    
+    # square radius around the centre cell
     row, col = centre
     chosen[max(0, row - radius):row + radius + 1,
            max(0, col - radius):col + radius + 1] = True
 
 
 def place_forest(stage, rng=None):
-    """Choose the cells to turn into forest.
-
-    stage: the default stage, a list of rows of Cells, before anything has
-        been placed or lit. It must not be modified.
-    rng: a numpy Generator, so a run can be repeated exactly; omit for a
-        different choice every time. Not needed: the placement is fixed by
-        the stage.
-
-    There is no limit on how many cells, and this does not avoid the lake: the
-    caller discards any cell that can't take forest.
-
-    Returns an integer array of shape (number of cells, 2) of (row, col)
-    co-ordinates, with no cell repeated.
-    """
+    # This simply places them around ignition sources and the town
+    
     chosen = np.zeros((len(stage), len(stage[0])), dtype=bool)
 
     for source in find_cells_of_type(stage, IGNITION_TYPES):

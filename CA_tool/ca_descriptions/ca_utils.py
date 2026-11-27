@@ -21,13 +21,13 @@ def ft_per_min_to_kmh(speed_ft_per_min) -> float:
 
 
 def neighbour_distances(cell_size, offsets=MOORE_OFFSETS) -> list[float]:
-    """Centre-to-centre distance to each neighbour, in the units of cell_size."""
+    # Centre-to-centre distance to each neighbour, in the units of cell_size.
     return [cell_size * math.hypot(east, north) for east, north in offsets]
 
 
 def wind_components(direction) -> tuple[float, float]:
-    """Split a wind direction (degrees, see RunConstants) into east and north
-    components, each -1 to 1, for the way the wind is BLOWING TOWARDS."""
+    # Split a wind direction (degrees, see RunConstants) into east and north
+    # components, each -1 to 1, for the way the wind is BLOWING TOWARDS.
     radians = math.radians(direction % 360)
     east = -math.sin(radians)
     north = -math.cos(radians)
@@ -35,8 +35,8 @@ def wind_components(direction) -> tuple[float, float]:
 
 
 def values_at_neighbours(array, offsets=MOORE_OFFSETS) -> list[np.ndarray]:
-    """For each offset, an array whose value at a cell is `array` at that
-    neighbour (False beyond the grid edge), in the order of offsets."""
+    # For each offset, an array whose value at a cell is array at that
+    # neighbour (False beyond the grid edge), in the order of offsets.
     rows, cols = array.shape
     padded = np.pad(array, 1, constant_values=False)
     return [padded[1 - north:1 - north + rows, 1 + east:1 + east + cols]

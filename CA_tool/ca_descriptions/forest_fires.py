@@ -105,24 +105,20 @@ def load_run_constants():
 
 
 def terrain_setting(key):
-    # The config.json value called `key` for each terrain.
     return {terrain: CONFIG["terrain"][terrain.name][key] for terrain in Terrain}
 
 
-# Colours are sampled from the reference map (forest_fires_meta/town.png).
 TERRAIN_COLOURS = {terrain: tuple(colour)
                    for terrain, colour in terrain_setting("colour").items()}
 
 SPECIAL_COLOURS = {special: tuple(CONFIG["special_colours"][special.name])
                    for special in SpecialType}
 
-# Orange, shifted per terrain so the burning terrain is still identifiable
 BURNING_COLOURS = {terrain: tuple(colour) for terrain, colour
                    in terrain_setting("burning_colour").items()}
 
 
 def blacken(colour, darkness=BURNT_DARKNESS):
-    """The colour scaled towards black (darkness is the brightness kept)."""
     return tuple(channel * darkness for channel in colour)
 
 
@@ -351,6 +347,7 @@ FUEL_MODELS = {terrain: FuelModel(**fuel)
 
 
 def rothermel_rate_kmh(fuel, wind_kmh, alignment=1.0):
+    # implemented as-is from the "statistics needed for model design" in drive
     """Fire spread rate (km/h) through a fuel: R = R0 * (1 + W + S).
 
     alignment: cosine between the wind and the fire's direction of travel
@@ -395,16 +392,7 @@ def harmonic_mean(first, second):
 
 
 def directional_rates(stage, run):
-    """How fast fire spreads into each cell from each neighbour.
-
-    Returns one array per neighbour (in the order of MOORE_OFFSETS) holding,
-    for every cell, the fraction of the gap to that neighbour crossed per hour
-    when the neighbour is burning.
-
-    A fire crossing between two cells spends half the gap in each, so its
-    speed is the harmonic mean of the two terrains' rates. Inside one terrain
-    that is just the terrain's rate; against a lake it is 0.
-    """
+    # How fast fire spreads into each cell from each neighbour.
     wind_east, wind_north = wind_components(run.wind_direction)
     alignments = travel_alignments(wind_east, wind_north)
     distances = neighbour_distances(CELL_SIZE_KM)
@@ -424,14 +412,7 @@ def directional_rates(stage, run):
 
 
 def spread_noise(shape, randomness, seed=None):
-    """A random speed multiplier for every cell and neighbour direction.
-
-    Lognormal, so it is never negative, and shifted to have a mean of 1 so the
-    average spread rate is still the Rothermel rate. It is drawn once per run
-    (not every step), so how random the fire is doesn't depend on the time
-    per step. randomness is the spread of the log of the multiplier; 0 gives
-    exactly 1 everywhere.
-    """
+    # Some noise so no 2 runs are the same
     if randomness <= 0:
         return np.ones(shape)
     return np.random.default_rng(seed).lognormal(
@@ -450,11 +431,11 @@ class TimeStep:
 
 
 def choose_time_step(rates, stage):
-    """The time per generation: how long the fastest fire front takes to
-    cross exactly one gap between neighbouring cells.
-
-    The CA can only move fire one cell per step, so any longer step would
-    slow the fastest fire down. Slower fronts need several steps per gap.
+    """
+    since fire can only spread 1 cell per step, the time per step 
+    is the time it takes the fastest fire front to cross one cell.
+    This is printed later so adjustments can be made to results. the reason 
+    is also displayed so the user can see the logic behind it.
     """
     fastest = max(range(len(rates)), key=lambda d: rates[d].max())
     fastest_rate = rates[fastest].max()
@@ -630,14 +611,7 @@ def dry_out(grid, fire, now):
 
 
 def drop_water(grid, fire, now):
-    """Ask place_water where to put the water, then wet those cells.
-
-    place_water only decides where, so how much is used is enforced here: if
-    it returns more than fire.water_cells cells, only the first ones are used.
-    Lake cells are ignored. A wet cell can't catch fire for TIME_TO_DRY_HOURS,
-    and a cell that was burning is put out: it stays burnt, since the fuel it
-    burned is gone.
-    """
+    # Ask place_water where to put the water, then wet those cells.
     # place_water is told where the fire and the town are, so it can aim
     cells = place_water(grid.copy(), fire.water_cells, fire.water_rng,
                         burning=np.isin(grid, BURNING_STATE_NUMBERS),
@@ -660,12 +634,11 @@ def drop_water(grid, fire, now):
     grid[hit] = WET_STATE[grid[hit].astype(int)]
 
 
-def transition_function(grid, neighbourstates, neighbourcounts, fire):
+def transition_function(grid, neighbourstates, neighbourcounts, fire: FireData):
     """Apply one step of fire to the grid and return the new grid. There is
     no randomness: the same run always burns the same way.
 
-    fire: per-cell burn data and spread rates, updated in place. One step is
-        fire.hours_per_step hours.
+    fire: per-cell burn data and spread rates.
 
     0. Water arrives once at fire.response_step. If a cell dries during
        this step, fire can advance into it for the remaining dry hours.
