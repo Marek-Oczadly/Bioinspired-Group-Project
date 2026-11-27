@@ -86,42 +86,22 @@ class Wetness(Enum):
 
 @dataclass
 class RunConstants:
-    """The settings from run_constants.json that change between runs.
-
-    wind_direction: where the wind comes FROM, in degrees clockwise from
-        north (0 = northerly, 90 = easterly, ...).
-    wind_speed: km/h.
-    spread_randomness: how much each fire front's speed varies at random, as
-        a fraction of its Rothermel speed (0 = none, 0.3 = about 30%). The
-        average speed is unchanged.
-    random_seed: a whole number to repeat a run exactly, or null for a
-        different run each time.
-    time_to_respond_hours: how long after the start the water arrives. The
-        step length is worked out from the wind, so this is rounded to the
-        nearest whole step.
-    water_area_km2: how much water there is, as the area it covers.
-    guard_enabled: whether the guard strategies are used. When true,
-        place_forest plants extra forest before the run and place_water
-        drops the water; when false the fire runs on the default stage with
-        no water at all.
-    """
+    # The settings from run_constants.json that change between runs.
     burn_incinerator: bool
     burn_power_plant: bool
-    wind_direction: float
-    wind_speed: float
-    spread_randomness: float = 0.0
-    random_seed: Optional[int] = None
-    time_to_respond_hours: float = 12.0
-    water_area_km2: float = 12.5
-    guard_enabled: bool = True
+    wind_direction: float #deg,  where the wind comes FROM, in degrees clockwise from north (0 = northerly, 90 = easterly etc)
+    wind_speed: float # km/h
+    spread_randomness: float = 0.0 #  how much each fire front's speed varies at random, as a fraction of its Rothermel speed (0 = none, 0.3 = about 30%)
+    random_seed: Optional[int] = None # None if random
+    time_to_respond_hours: float = 24.0 # how long after the start the water arrives. Rounded bc step length varies
+    water_area_km2: float = 12.5 # how much water there is, as the area it covers.
+    guard_enabled: bool = True # if true place water and forest
 
     @property
-    def ignition_points(self):
+    def ignition_points(self): # Gets the ignition points from the bools
         return tuple(
-            point for point, burn in (
-                (SpecialType.INCINERATOR, self.burn_incinerator),
-                (SpecialType.POWER_PLANT, self.burn_power_plant))
-            if burn)
+            point for point, burn in ((SpecialType.INCINERATOR, self.burn_incinerator),
+                                      (SpecialType.POWER_PLANT, self.burn_power_plant)) if burn)
 
 
 def load_run_constants():
@@ -129,9 +109,8 @@ def load_run_constants():
 
 
 def terrain_setting(key):
-    """The config.json value called `key` for each terrain."""
-    return {terrain: CONFIG["terrain"][terrain.name][key]
-            for terrain in Terrain}
+    # The config.json value called `key` for each terrain.
+    return {terrain: CONFIG["terrain"][terrain.name][key] for terrain in Terrain}
 
 
 # Colours are sampled from the reference map (forest_fires_meta/town.png).
@@ -208,14 +187,7 @@ SPECIAL_CODES = {
 
 
 def load_stage(path):
-    """Load a stage (a list of rows of unburnt Cells) from a text file.
-
-    Cells are space separated, rows are newline separated. Each cell is a
-    terrain code (C, D, S, L) then a special code (T, I, P, N for none),
-    e.g. "DN LN CT".
-
-    Raises ValueError on an unknown code or rows of differing length.
-    """
+    # C: charparal, D dense forest, S scrubland L lake + T town, I incinerator, P power plant, N none
     stage = []
     with open(path, "r") as f:
         for line_num, line in enumerate(f, start=1):
