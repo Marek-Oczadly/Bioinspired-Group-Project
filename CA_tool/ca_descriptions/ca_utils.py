@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from typing import List, Tuple
 
 METRES_PER_KM = 1000
 METRES_PER_FOOT = 0.3048
@@ -20,12 +21,12 @@ def ft_per_min_to_kmh(speed_ft_per_min) -> float:
             / METRES_PER_KM)
 
 
-def neighbour_distances(cell_size, offsets=MOORE_OFFSETS) -> list[float]:
+def neighbour_distances(cell_size, offsets=MOORE_OFFSETS) -> List[float]:
     # Centre-to-centre distance to each neighbour, in the units of cell_size.
     return [cell_size * math.hypot(east, north) for east, north in offsets]
 
 
-def wind_components(direction) -> tuple[float, float]:
+def wind_components(direction) -> Tuple[float, float]:
     # Split a wind direction (degrees, see RunConstants) into east and north
     # components, each -1 to 1, for the way the wind is BLOWING TOWARDS.
     radians = math.radians(direction % 360)
@@ -34,7 +35,7 @@ def wind_components(direction) -> tuple[float, float]:
     return east, north
 
 
-def values_at_neighbours(array, offsets=MOORE_OFFSETS) -> list[np.ndarray]:
+def values_at_neighbours(array, offsets=MOORE_OFFSETS) -> List[np.ndarray]:
     # For each offset, an array whose value at a cell is array at that
     # neighbour (False beyond the grid edge), in the order of offsets.
     rows, cols = array.shape
