@@ -1,9 +1,3 @@
-"""Small helper functions shared by the CA descriptions.
-
-This file is called ca_utils rather than utils because CAPyLE has its own
-`utils` module, and a second one on the path would shadow it.
-"""
-
 import math
 import numpy as np
 
@@ -17,24 +11,21 @@ MOORE_OFFSETS = ((-1, 1), (0, 1), (1, 1),
                  (-1, -1), (0, -1), (1, -1))
 
 
-def kmh_to_ft_per_min(speed_kmh):
-    """Convert a speed from kilometres per hour to feet per minute."""
+def kmh_to_ft_per_min(speed_kmh) -> float:
     return speed_kmh * METRES_PER_KM / METRES_PER_FOOT / MINUTES_PER_HOUR
 
 
-def ft_per_min_to_kmh(speed_ft_per_min):
-    """Convert a speed from feet per minute to kilometres per hour."""
+def ft_per_min_to_kmh(speed_ft_per_min) -> float:
     return (speed_ft_per_min * METRES_PER_FOOT * MINUTES_PER_HOUR
             / METRES_PER_KM)
 
 
-def neighbour_distances(cell_size, offsets=MOORE_OFFSETS):
-    """Centre-to-centre distance to each neighbour, in the units of cell_size
-    and in the order of offsets (diagonals are sqrt(2) times further)."""
+def neighbour_distances(cell_size, offsets=MOORE_OFFSETS) -> list[float]:
+    """Centre-to-centre distance to each neighbour, in the units of cell_size."""
     return [cell_size * math.hypot(east, north) for east, north in offsets]
 
 
-def wind_components(direction):
+def wind_components(direction) -> tuple[float, float]:
     """Split a wind direction (degrees, see RunConstants) into east and north
     components, each -1 to 1, for the way the wind is BLOWING TOWARDS."""
     radians = math.radians(direction % 360)
@@ -43,7 +34,7 @@ def wind_components(direction):
     return east, north
 
 
-def values_at_neighbours(array, offsets=MOORE_OFFSETS):
+def values_at_neighbours(array, offsets=MOORE_OFFSETS) -> list[np.ndarray]:
     """For each offset, an array whose value at a cell is `array` at that
     neighbour (False beyond the grid edge), in the order of offsets."""
     rows, cols = array.shape

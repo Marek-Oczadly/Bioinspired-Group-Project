@@ -1,7 +1,6 @@
 # Name: Forest Fires
 # Dimensions: 2
 
-# --- Set up executable path, do not edit ---
 import sys
 import inspect
 this_file_loc = (inspect.stack()[0][1])
@@ -10,8 +9,6 @@ sys.path.append(main_dir_loc)
 sys.path.append(main_dir_loc + 'capyle')
 sys.path.append(main_dir_loc + 'capyle/ca')
 sys.path.append(main_dir_loc + 'capyle/guicomponents')
-# ---
-
 import json
 import math
 import os
@@ -40,7 +37,7 @@ CONFIG = load_json("config.json")
 
 STAGE_PATH = os.path.join(META_DIR, CONFIG["stage_file"])
 
-CELL_SIZE_KM = CONFIG["cell_size_km"]
+CELL_SIZE_KM = CONFIG["cell_size_km"] # 0.5
 WIND_FOCUS_PER_KMH = CONFIG["wind_focus_per_kmh"]
 BURNT_DARKNESS = CONFIG["burnt_darkness"]
 BURNING_TOWN_DARKNESS = CONFIG["burning_town_darkness"]
@@ -51,7 +48,7 @@ WET_COLOUR = tuple(CONFIG["wet_colour"])
 WET_BLEND = CONFIG["wet_blend"]
 
 
-FALLBACK_HOURS_PER_STEP = 1.0
+FALLBACK_HOURS_PER_STEP = 1.0 # prevents 0 div but shouldnt be called
 # Float slack so a front that should arrive exactly this step isn't a hair short
 PROGRESS_TOLERANCE = 1e-9
 # The same for times, so a cell due to dry exactly now isn't a step late
@@ -80,7 +77,6 @@ class SpecialType(Enum):
 
 
 class Wetness(Enum):
-    """Marks a display key as the wet version of another one."""
     WET = auto()
 
 
@@ -232,14 +228,11 @@ DISPLAY_COLOURS[(SpecialType.TOWN, BurnState.BURNT)] = TOWN_BURNT_COLOUR
 
 
 def with_blue_hue(colour):
-    """The colour with the wet colour blended in."""
     return tuple((1 - WET_BLEND) * channel + WET_BLEND * wet_channel
                  for channel, wet_channel in zip(colour, WET_COLOUR))
 
 
-def can_be_wet(key):
-    """Whether a display key has a wet version. Water puts out fire, so a
-    burning cell is never wet, and a lake ignores water."""
+def can_be_wet(key) -> bool:
     if isinstance(key, tuple):
         owner, burn_state = key
         return burn_state != BurnState.BURNING and owner != Terrain.LAKE
@@ -292,9 +285,7 @@ def stage_to_grid(stage):
 
 
 def random_streams(run):
-    """Independent random seeds for the spread speeds, the water and the
-    forest, all from run.random_seed, so a seeded run repeats exactly and
-    none of the three changes another."""
+    #gens 3 rnadom seeds for spread, water, forest 
     spread, water, forest = np.random.SeedSequence(run.random_seed).spawn(3)
     return spread, water, forest
 
@@ -605,19 +596,15 @@ class FireData:
 
 
 def setup(args):
-    """Set up the config object used to interact with the GUI"""
     config_path = args[0]
     config = utils.load(config_path)
-    # -- THE CA MUST BE RELOADED IN THE GUI IF ANY OF THE BELOW ARE CHANGED --
+    
     config.title = "Forest Fires"
     config.dimensions = 2
     config.states = STATES
-    # -------------------------------------------------------------------------
-
-    # ---- Override the defaults below (these may be changed at anytime) ----
 
     config.state_colors = STATE_COLOURS
-    # The stage has real edges, so fire must not wrap around
+
     config.wrap = False
     run = load_run_constants()
     stage = build_stage(run)
@@ -625,15 +612,9 @@ def setup(args):
     config.grid_dims = initial_grid.shape
     config.initial_grid = initial_grid
 
-    # The time per step comes from the spread speeds, so tell the user what
-    # one generation means (the GUI shows what a description prints)
     fire = FireData.from_stage(stage, run)
     print(describe_run(run, fire.time_step))
 
-    # ----------------------------------------------------------------------
-
-    # the GUI calls this to pass the user defined config
-    # into the main system with an extra argument
     # do not change
     if len(args) == 2:
         config.save()
