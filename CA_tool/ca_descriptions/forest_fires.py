@@ -188,17 +188,9 @@ def load_stage(path):
                 continue
             row = []
             for token in tokens:
-                if (len(token) != 2 or token[0] not in TERRAIN_CODES
-                        or token[1] not in SPECIAL_CODES):
-                    raise ValueError(
-                        "Invalid cell {!r} on line {}".format(token, line_num))
                 row.append(Cell.from_terrain(
                     TERRAIN_CODES[token[0]],
                     special_type=SPECIAL_CODES[token[1]]))
-            if stage and len(row) != len(stage[0]):
-                raise ValueError(
-                    "Line {} has {} cells, expected {}".format(
-                        line_num, len(row), len(stage[0])))
             stage.append(row)
     return stage
 
@@ -262,9 +254,7 @@ BURNING_STATE_NUMBERS = [
 
 
 def display_state(cell):
-    """The numeric grid state of a cell. An unburnt special type hides its
-    terrain, and a burning or burnt town keeps its own look; other cells show
-    their terrain burning or burnt."""
+     # The numeric grid state of a cell
     if cell.burn_state != BurnState.UNBURNT:
         owner = (SpecialType.TOWN if cell.special_type == SpecialType.TOWN
                  else cell.terrain)
@@ -287,12 +277,7 @@ def random_streams(run):
 
 
 def plant_forest(stage, rng):
-    """Turn the cells place_forest picks into dense forest.
-
-    place_forest only decides where, so what can't take forest is enforced
-    here: the lake is skipped. A town, incinerator or power plant keeps its
-    special type and just gets forest fuel underneath.
-    """
+    # Turn the cells place_forest picks into dense forest. ran at the start of the run
     for row, col in place_forest(stage, rng):
         cell = stage[row][col]
         if cell.terrain == Terrain.LAKE:
@@ -302,10 +287,6 @@ def plant_forest(stage, rng):
 
 
 def build_stage(run):
-    """The stage for a run: the default stage with the extra forest planted,
-    then the ignition points lit. The forest is random, so call this once and
-    use the result for everything in the run. With the guard disabled no
-    extra forest is planted."""
     stage = load_stage(STAGE_PATH)
     if run.guard_enabled:
         forest_rng = np.random.default_rng(random_streams(run)[2])
@@ -316,9 +297,7 @@ def build_stage(run):
 
 @dataclass(frozen=True)
 class FuelModel:
-    """The Rothermel (1972) inputs for one terrain, from Anderson's fuel
-    models. Rothermel works in ft/min; see "Statistics Needed for Model
-    Design.doc" on the drive for where the values come from."""
+    # see the google doc for source
     heat_released: float
     share_reaching_fuel: float  # share of the heat reaching unburnt fuel
     heat_to_ignite: float
@@ -331,13 +310,13 @@ class FuelModel:
 
     @property
     def no_wind_rate(self):
-        """R0: the spread rate on flat ground with no wind, in ft/min."""
+        # R0: the spread rate on flat ground with no wind, in ft/min
         return (self.heat_released * self.share_reaching_fuel
                 / self.heat_to_ignite)
 
     @property
     def slope_boost(self):
-        """S = k * tan(slope)^2"""
+        # S = k * tan(slope)^2
         return (self.slope_constant
                 * math.tan(math.radians(self.slope_degrees)) ** 2)
 
@@ -348,15 +327,14 @@ FUEL_MODELS = {terrain: FuelModel(**fuel)
 
 def rothermel_rate_kmh(fuel, wind_kmh, alignment=1.0):
     # implemented as-is from the "statistics needed for model design" in drive
-    """Fire spread rate (km/h) through a fuel: R = R0 * (1 + W + S).
+    """
+    Fire spread rate (km/h) through a fuel: R = R0 * (1 + W + S) see the doc
 
     alignment: cosine between the wind and the fire's direction of travel
         (1 = head fire, running with the wind). The wind boost W is scaled by
         alignment raised to 1 + WIND_FOCUS_PER_KMH * wind speed, so it fades
         off-axis (faster in a stronger wind) and is 0 across or against the
         wind. Flank and backing fires then spread at the no-wind rate.
-
-    W = a * U^b * p, where U is the open wind (ft/min) * wind factor.
     """
     midflame_wind = kmh_to_ft_per_min(wind_kmh) * fuel.wind_factor
     wind_boost = (fuel.wind_constant * midflame_wind ** fuel.wind_power
@@ -368,11 +346,9 @@ def rothermel_rate_kmh(fuel, wind_kmh, alignment=1.0):
 
 
 def travel_alignments(east, north, offsets=MOORE_OFFSETS):
-    """Cosine between the wind and the fire's direction of travel into a cell
-    from each neighbour, in the order of offsets.
+    # Cosine between the wind and the fire's direction of travel into a cell from each neighbour, in the order of offsets
 
-    east, north: the wind components from wind_components().
-    """
+    # east, north: the wind components from wind_components()
     alignments = []
     for offset_east, offset_north in offsets:
         length = math.hypot(offset_east, offset_north)
@@ -452,20 +428,16 @@ def choose_time_step(rates, stage):
 
 
 def response_step(run, time_step):
-    """How many steps have passed when the water arrives: the response time
-    rounded to the nearest whole step (the step length depends on the wind)."""
+    # Calculates the nuber of steps for water to drop ie how long firefighters would notice and helis would come
     return max(0, round(run.time_to_respond_hours / time_step.hours))
 
 
 def water_squares(run):
-    """How many cells the water covers: its area divided by the area of one
-    cell (0.5 km by 0.5 km is 0.25 km^2). place_water is only told this."""
+    # 50 unless something changes
     return int(math.floor(run.water_area_km2 / CELL_SIZE_KM ** 2 + 1e-9))
 
 
 def describe_run(run, time_step):
-    """Text for the console: the wind, the spread speeds, the time step and
-    when the water arrives."""
     lines = ["Wind {:.1f} km/h from {:.0f} degrees".format(
         run.wind_speed, run.wind_direction)]
     for terrain in Terrain:
@@ -499,10 +471,9 @@ def describe_run(run, time_step):
 
 @dataclass
 class FireData:
-    """Per-cell data (arrays shaped like the grid) that the grid's single
-    state number can't hold. The transition function updates front_progress,
-    caught_fire, burn_time, head_start, wet, wet_until, steps_taken and
-    water_placed."""
+    # Per-cell data (arrays shaped like the grid) that the grid's single state number can't hold. 
+    # The transition function updates front_progress, caught_fire, burn_time, head_start, wet, wet_until, steps_taken and water_placed.
+    
     rates: np.ndarray  # from directional_rates(), indexed [neighbour, row, col]
     time_step: TimeStep
     front_progress: np.ndarray  # 0-1 per neighbour: how far its front has got
@@ -604,15 +575,14 @@ def setup(args):
 
 
 def dry_out(grid, fire, now):
-    """Let wet cells whose time is up go back to how they were."""
+    # Removes wetness after time has passed (time_to_dry_hours in config.json).
     drying = fire.wet & (fire.wet_until <= now + HOURS_TOLERANCE)
     grid[drying] = DRY_STATE[grid[drying].astype(int)]
     fire.wet &= ~drying
 
 
 def drop_water(grid, fire, now):
-    # Ask place_water where to put the water, then wet those cells.
-    # place_water is told where the fire and the town are, so it can aim
+    # Ask place_water where to put the water, then wet those cells. Change place_water.py rather than this
     cells = place_water(grid.copy(), fire.water_cells, fire.water_rng,
                         burning=np.isin(grid, BURNING_STATE_NUMBERS),
                         town=fire.town_mask)
@@ -637,25 +607,24 @@ def drop_water(grid, fire, now):
 def transition_function(grid, neighbourstates, neighbourcounts, fire: FireData):
     """Apply one step of fire to the grid and return the new grid. There is
     no randomness: the same run always burns the same way.
-
+    
     fire: per-cell burn data and spread rates.
 
     0. Water arrives once at fire.response_step. If a cell dries during
-       this step, fire can advance into it for the remaining dry hours.
+        this step, fire can advance into it for the remaining dry hours.
     1. Each burning neighbour is a separate fire front moving into a cell,
-       and each front keeps its own progress (the fraction of the gap to the
-       cell it has crossed). Progress is kept if the neighbour burns out,
-       since the front stays where it got to.
+        and each front keeps its own progress (the fraction of the gap to the
+        cell it has crossed). Progress is kept if the neighbour burns out,
+        since the front stays where it got to.
     2. A cell catches fire when its first front crosses the gap (progress 1).
-       Fronts don't add up: a second neighbour doesn't speed the first.
+        Fronts don't add up: a second neighbour doesn't speed the first. A cell reached part-way
+        through a step really caught fire that many hours before the step ended,
+        so it starts with that much burn time and its neighbours are credited
+        with it (its head_start) on the next step. Without this every cell would
+        round up to a whole number of steps, and slow fronts (which need several
+        steps per cell) would be noticeably slower than their spread rate.
     3. Burning cells age and burn out after their terrain's burn duration.
 
-    A front rarely arrives exactly on a step boundary. A cell reached part-way
-    through a step really caught fire that many hours before the step ended,
-    so it starts with that much burn time and its neighbours are credited
-    with it (its head_start) on the next step. Without this every cell would
-    round up to a whole number of steps, and slow fronts (which need several
-    steps per cell) would be noticeably slower than their spread rate.
     """
     # 0. Water. Cells put out by the water are no longer burning below.
     now = fire.steps_taken * fire.hours_per_step
