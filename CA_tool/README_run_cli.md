@@ -4,17 +4,17 @@
 
 ## Run it
 
-Use the same Python environment as CaPyle. The runner needs NumPy, Matplotlib and Tkinter through CaPyle's imports. From the repository root, run:
+Use the same Python environment as CaPyle. The runner needs NumPy, Matplotlib and Tkinter through CaPyle's imports. From the `CA_tool` folder, run:
 
 ```sh
-python3 CA_tool/run_cli.py
+python3 run_cli.py
 ```
 
 For a quick check or a parallel batch:
 
 ```sh
-python3 CA_tool/run_cli.py --runs 1 --generations 10 --workers 1
-python3 CA_tool/run_cli.py --runs 12 --workers 4
+python3 run_cli.py --runs 1 --generations 10 --workers 1
+python3 run_cli.py --runs 12 --workers 4
 ```
 
 ## Arguments
