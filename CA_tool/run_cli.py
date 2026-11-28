@@ -115,12 +115,12 @@ def simulate(run, generations, grid_size, seed):
     initial_grid = stage_to_grid(stage)
 
     # Config for CA
-    config = CAConfig('ca_descriptions/forest_fires.py')
-    config.states = STATES
-    config.grid_dims = initial_grid.shape
+    config                 = CAConfig('ca_descriptions/forest_fires.py')
+    config.states          = STATES
+    config.grid_dims       = initial_grid.shape
     config.num_generations = generations
-    config.initial_grid = initial_grid
-    config.wrap = False  # Opposite map edge wrapping
+    config.initial_grid    = initial_grid
+    config.wrap            = False  # Opposite map edge wrapping
     config.fill_in_defaults()
 
     fire = FireData.from_stage(stage, run_constants)
